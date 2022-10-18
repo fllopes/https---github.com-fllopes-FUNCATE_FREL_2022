@@ -19,7 +19,7 @@ if caps & QgsVectorDataProvider.DeleteFeatures:
 
     for feat in layer.getFeatures():
 
-        if feat['gid'] not in [feat['gid'] for feat in first_feats]:
+        if feat['gid'] not in [first_feat['gid'] for first_feat in first_feats]:
 
             first_feats.append(feat)
 
