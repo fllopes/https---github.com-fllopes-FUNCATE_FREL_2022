@@ -15,11 +15,11 @@ def main():
 
     initial_layer = QgsProject.instance().mapLayersByName("amazonia_carbono_vegetacao_1")[0]
 
-    output_layer1_name = str(initial_layer.name() + '_sobreps_iguais_script')
+    dissolved_layer_name = str(initial_layer.name() + '_diss_script')
 
-    success1 = db_writer(initial_layer.name(), output_layer1_name)
+    dissolved_layer = layer_dissolve(initial_layer.name(), dissolved_layer_name)
 
-    if not success1:
+    if dissolved_layer == False:
 
         log.close_log()
 
@@ -27,39 +27,41 @@ def main():
 
     else:
 
-        output_layer1 = load_output_layer(output_layer1_name)
+        pass
 
-        if output_layer1 == False:
+        # success2 = layer_duplicate_removal(dissolved_layer)
 
-            log.close_log()
+        # if not success2:
 
-            return None
+        #     log.close_log()
 
-        else:
+        #     return None
 
-            success2 = layer_duplicate_removal(output_layer1)
+        # else:
 
-            if not success2:
-
-                log.close_log()
-
-                return None
-
-            else:
-
-                pass
+        #     pass
 
     log.close_log()
 
+
     
+def layer_dissolve(input_layer, output_layer_name):
+
+    log = process_log('same_class_touch', 'Criando layer "{}" contendo os polígonos que tocam outros de mesmos c_pretorig, c_pretvizi, categorig, categvizi, tipo'.format(output_layer_name))
+
+    main_query = "create table public.{} as select a.c_pretorig, a.c_pretvizi, a.categorig, a.categvizi, a.tipo, (ST_Dump(ST_MemUnion(a.geom))).geom as geom from {} a group by a.c_pretorig, a.c_pretvizi, a.categorig, a.categvizi, a.tipo;".format(output_layer_name, input_layer)
+
+    create_primary_key = "alter table public.{} add column id serial primary key;".format(output_layer_name)
+
+    run_postgis_query(main_query, create_primary_key)
+
+    log.close_log()
+
+    return load_output_layer(output_layer_name)
 
 
 
-def db_writer(initial_layer, layer_to_create):
-
-    log = process_log('db_writer', 'Criando layer "{}" contendo os polígonos que tocam outros de mesmos c_pretorig, c_pretvizi, categorig, categvizi, tipo'.format(layer_to_create))
-
-    success = True
+def run_postgis_query(*queries):
 
     try:
 
@@ -67,9 +69,9 @@ def db_writer(initial_layer, layer_to_create):
 
         cur = conn.cursor()
 
-        cur.execute("create table public.{} as select a.gid, a.c_pretorig, a.c_pretvizi, a.categorig, a.categvizi, a.tipo, a.cdw, a.clitter, a.ctotal4inv, a.cagb, a.cbgb,  a.geom from {} a inner join {} b on (a.geom && b.geom and ST_Relate(a.geom, b.geom, '2********')) where a.ctid != b.ctid and a.c_pretorig = b.c_pretorig and a.c_pretvizi = b.c_pretvizi and a.categorig = b.categorig and a.categvizi = b.categvizi and a.tipo = b.tipo;".format(layer_to_create, initial_layer, initial_layer))
+        for query in queries:
 
-        cur.execute("alter table public.{} add column id serial primary key;".format(layer_to_create))
+            cur.execute(query)
 
         conn.commit()
 
@@ -78,10 +80,6 @@ def db_writer(initial_layer, layer_to_create):
         conn.close()
 
     except: raise
-
-    log.close_log()
-
-    return success
 
 
 
@@ -174,8 +172,3 @@ class process_log:
 
 
 main()
-
-
-
-
-
