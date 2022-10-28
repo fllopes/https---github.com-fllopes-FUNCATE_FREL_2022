@@ -1,5 +1,5 @@
 import geopandas as gpd
-from shapely.geometry import Polygon, MultiPolygon
+from shapely.geometry import Polygon, MultiPolygon, mapping
 import matplotlib.pyplot as plt
 from pathlib import Path
 import datetime
@@ -57,49 +57,197 @@ def trigger_algorithm(configs, files):
     for i, file in enumerate(files):
         
         print('\nProcessing file ({}/{} - {}%): '.format(i + 1, len(files), round((i + 1) * 100 / len(files), 1)), file.stem)
-    
-    
-        input_data = gpd.read_file( file )
-        
-        print('  Load: success. ', str(datetime.now() - log.Start_time))
-        
-        
-        # diss = input_data.dissolve(by = ['C_PRETORIG', 'C_PRETVIZI', 'CATEGORIG', 'CATEGVIZI', 'TIPO', 'CDW', 'CLITTER', 'CTOTAL4INV', 'CAGB', 'CBGB'], as_index=False)
-        
-        # export(diss, configs, file.stem)
-                
-        # print('  Dissolve: success. ', str(datetime.now() - log.Start_time))
-        
-    
-        union = gpd.overlay(input_data, input_data, how = 'union', keep_geom_type = False)
-        
-        export(union, '_union', configs, file.stem, log)
-        
-        print('  Union: success. ', str(datetime.now() - log.Start_time))
-        
-        
-        natural_only = union[ union.TIPO_1 == 'NATURAL', union.TIPO_2 == 'NATURAL' ]
 
-        antropic_only = union[ union.TIPO_1 == 'ANTROPIZADA', union.TIPO_2 == 'ANTROPIZADA']
+
+        input_data = get_data(file)
         
-        print('Natural only: ', len(natural_only), 'Antropic only: ', len(antropic_only))
-    
-    
-        if configs.plot: plot_data(diss)
+        if input_data == None:
+            
+            return None
         
-        else: pass
+        else:
+        
+            try:
     
+                input_data_exp = multipol_to_pol(input_data)
+        
+                print('\n  2. Multipolygon conversion to polygon: success. ', str(datetime.now() - log.Start_time))
+                
+            except:
+                
+                print('\n  2. Multipolygon conversion to polygon: error. Skipping to the next file.\n')
+                
+                break
+    
+    
+            try:
+                
+                remove_dimension_z(input_data_exp)
+            
+                print('\n  3. Removal of dimension z: success. ', str(datetime.now() - log.Start_time))
+            
+            except:
+                
+                print('\n  3. Removal of dimension z: error. Skipping to the next file.\n')
+                
+                break
+    
+    
+            # diss = input_data_exp.dissolve(by = ['C_PRETORIG', 'C_PRETVIZI', 'CATEGORIG', 'CATEGVIZI', 'TIPO', 'CDW', 'CLITTER', 'CTOTAL4INV', 'CAGB', 'CBGB'], as_index=False)
+            
+            # print('  Dissolve: success. ', str(datetime.now() - log.Start_time))
+            
+            # export(diss, configs, file.stem)
+            
+                    
+        
+            try:
+                
+                union = gpd.overlay(input_data_exp, input_data_exp, how = 'union', keep_geom_type = False)
+                
+                if 'MultiLineString' in geometry_type_check(union):
+                    
+                    multilines_into_pols(union)
+                    
+                else: pass
+            
+                print('\n  4. Union: success. ', str(datetime.now() - log.Start_time))
+                
+            except Exception as e:
+                
+                print('\n  4. Union: error: ', e, '\nSkipping to the next file.\n')
+                            
+                break
+                        
+            
+            export(union, '_un', configs, file.stem, log)
+            
+            
+            # natural_only = union[ union.TIPO_1 == 'NATURAL', union.TIPO_2 == 'NATURAL' ]
+    
+            # antropic_only = union[ union.TIPO_1 == 'ANTROPIZADA', union.TIPO_2 == 'ANTROPIZADA']
+            
+            # print('  Natural only: ', len(natural_only), 'Antropic only: ', len(antropic_only))
+        
+        
+            if configs.plot: plot_data(union)
+            
+            else: pass
+        
         break
 
     log.close_log()
 
 
 
-def export(data_to_export, operation, configs, original_file_name, log):
-
-    data_to_export.to_file(str(configs.output_path + original_file_name + operation + '.shp'), driver = 'ESRI Shapefile')
+def get_data(file):
     
-    print('Export: success', str(datetime.now() - log.Start_time))
+    print('\n  1. Load file:')
+        
+    try:
+    
+        input_data = gpd.read_file( file )
+    
+        print('\n    success (', str(datetime.now() - log.Start_time), ')')
+        
+        return input_data
+        
+    except Exception as e:
+        
+        print('\n    Error: ', e, '\nSkipping to the next file.\n')
+        
+        return False
+        
+
+
+def multipol_to_pol(data):
+    
+    distinct_types = geometry_type_check(data)
+        
+    if 'MultiPolygon' in distinct_types:
+            
+        new_data = data.explode()
+                
+        multipol_to_pol(new_data)
+            
+    else: new_data = data
+        
+    return new_data
+
+
+
+def geometry_type_check(data):
+    
+    distinct_types = []
+
+    for pol in data.iterfeatures():
+        
+        if pol['geometry']['type'] not in distinct_types:
+            
+            distinct_types.append(pol['geometry']['type'])
+            
+        else: pass
+    
+    print('      Geometry types in file: ', distinct_types)
+    
+    return distinct_types
+
+
+
+def remove_dimension_z(data):   
+
+    new_geo = []
+    
+    for pol in data.geometry:
+        
+        if pol.has_z:
+            
+            if pol.geom_type == 'Polygon':
+                                
+                lines = [xy[:2] for xy in list(pol.exterior.coords)]
+                
+                new_p = Polygon(lines)
+                
+                new_geo.append(new_p)
+                
+    data.geometry = new_geo    
+
+
+
+def multilines_into_pols(data):
+    
+    try:
+    
+        data['geometry'] = [Polygon(mapping(x)['coordinates']) for x in data.geometry]
+        
+    except Exception as e:
+        
+        raise
+        
+    
+    if 'MultiLineString' in geometry_type_check(data):
+        
+        multilines_into_pols(data)
+        
+    else: pass
+    
+    print('      Conversão de linhas em polígonos: sucesso')
+    
+    return data
+
+
+
+def export(data_to_export, operation, configs, original_file_name, log):
+    
+    try:
+
+        data_to_export.to_file(str(configs.output_path + original_file_name + operation + '.shp'), driver = 'ESRI Shapefile')
+        
+        print('    Export: success', str(datetime.now() - log.Start_time))
+        
+    except RuntimeError as e:
+    
+        print('Error message: ', e)
 
 
 
