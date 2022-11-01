@@ -1,10 +1,12 @@
+import re
 import geopandas as gpd
-from shapely.geometry import Polygon, MultiPolygon, mapping
+from shapely.geometry import shape, Polygon, MultiPolygon, LineString, MultiLineString, mapping
 import matplotlib.pyplot as plt
 from pathlib import Path
 import datetime
 from datetime import datetime
 # from datetime import date
+import pandas as pd
 
 
 class Script_Configs:
@@ -18,6 +20,8 @@ class Script_Configs:
         self.file_extention = '.shp'
         
         self.plot = True
+
+        self.export_intermediary = True
         
     def input_pth( self, file_name ):
         
@@ -43,136 +47,184 @@ def main():
     files = locate_files(configs.input_path, configs.file_extention)
     
     print('\nNumber of files located and listed for processing: ', len(files))
-    
-    trigger_algorithm(configs, files)
-    
-    log.close_log()
 
-
-
-def trigger_algorithm(configs, files):
-    
-    log = process_log('trigger_algorithm', 'Runnig the algorithm on all the files sequencially.')
-    
     for i, file in enumerate(files):
-        
-        print('\nProcessing file ({}/{} - {}%): '.format(i + 1, len(files), round((i + 1) * 100 / len(files), 1)), file.stem)
+                
+        success = trigger_algorithm(configs, file, i + 1, len(files), round((i + 1) * 100 / len(files), 1))
 
+        if success == None:
 
-        input_data = get_data(file)
-        
-        if input_data == None:
-            
-            return None
-        
-        else:
-        
-            try:
-    
-                input_data_exp = multipol_to_pol(input_data)
-        
-                print('\n  2. Multipolygon conversion to polygon: success. ', str(datetime.now() - log.Start_time))
-                
-            except:
-                
-                print('\n  2. Multipolygon conversion to polygon: error. Skipping to the next file.\n')
-                
-                break
-    
-    
-            try:
-                
-                remove_dimension_z(input_data_exp)
-            
-                print('\n  3. Removal of dimension z: success. ', str(datetime.now() - log.Start_time))
-            
-            except:
-                
-                print('\n  3. Removal of dimension z: error. Skipping to the next file.\n')
-                
-                break
-    
-    
-            # diss = input_data_exp.dissolve(by = ['C_PRETORIG', 'C_PRETVIZI', 'CATEGORIG', 'CATEGVIZI', 'TIPO', 'CDW', 'CLITTER', 'CTOTAL4INV', 'CAGB', 'CBGB'], as_index=False)
-            
-            # print('  Dissolve: success. ', str(datetime.now() - log.Start_time))
-            
-            # export(diss, configs, file.stem)
-            
-                    
-        
-            try:
-                
-                union = gpd.overlay(input_data_exp, input_data_exp, how = 'union', keep_geom_type = False)
-                
-                if 'MultiLineString' in geometry_type_check(union):
-                    
-                    multilines_into_pols(union)
-                    
-                else: pass
-            
-                print('\n  4. Union: success. ', str(datetime.now() - log.Start_time))
-                
-            except Exception as e:
-                
-                print('\n  4. Union: error: ', e, '\nSkipping to the next file.\n')
-                            
-                break
-                        
-            
-            export(union, '_un', configs, file.stem, log)
-            
-            
-            # natural_only = union[ union.TIPO_1 == 'NATURAL', union.TIPO_2 == 'NATURAL' ]
-    
-            # antropic_only = union[ union.TIPO_1 == 'ANTROPIZADA', union.TIPO_2 == 'ANTROPIZADA']
-            
-            # print('  Natural only: ', len(natural_only), 'Antropic only: ', len(antropic_only))
-        
-        
-            if configs.plot: plot_data(union)
-            
-            else: pass
-        
-        break
+            print('File "{}" NOT fully PROCESSED.'.format(file.stem))
 
+            continue
+
+        else: break
+    
     log.close_log()
 
 
 
-def get_data(file):
+def trigger_algorithm(configs, file, file_count, total_files_count, progress):
+    
+    log = process_log('trigger_algorithm', '\n\nProcessing file ({}/{} - {}%): {}'.format(file_count, total_files_count, progress, file.stem))
+    
+    input_data, success = get_data(file, log)
+        
+    if success == False:
+        
+        return None
+    
+    else:
+    
+        union, success = self_union(input_data, log)
+
+        if success == False:
+    
+            return None
+
+        else:
+
+            if configs.export_intermediary:
+    
+                export(union, '_un', configs, file.stem, log)
+
+            else: pass
+
+
+        # diss = input_data_exp.dissolve(by = ['C_PRETORIG', 'C_PRETVIZI', 'CATEGORIG', 'CATEGVIZI', 'TIPO', 'CDW', 'CLITTER', 'CTOTAL4INV', 'CAGB', 'CBGB'], as_index=False)
+        
+        # print('  Dissolve: success. ', str(datetime.now() - log.Start_time))
+        
+        # export(diss, configs, file.stem)
+
+        # natural_only = union[ union.TIPO_1 == 'NATURAL', union.TIPO_2 == 'NATURAL' ]
+
+        # antropic_only = union[ union.TIPO_1 == 'ANTROPIZADA', union.TIPO_2 == 'ANTROPIZADA']
+        
+        # print('  Natural only: ', len(natural_only), 'Antropic only: ', len(antropic_only))
+    
+    
+        if configs.plot: plot_data(union)
+        
+    log.close_log()
+
+
+
+def get_data(file, log):
     
     print('\n  1. Load file:')
         
     try:
     
-        input_data = gpd.read_file( file )
+        raw_input_data = gpd.read_file( file )
+
+        input_data = data_validator(raw_input_data, log)
+
+        print('\n     Success: ', log.subprocess())
     
-        print('\n    success (', str(datetime.now() - log.Start_time), ')')
+        print('\n     Number of geometries in the original file: {}'.format(len(input_data)))
         
-        return input_data
+        return input_data, True
         
     except Exception as e:
         
-        print('\n    Error: ', e, '\nSkipping to the next file.\n')
+        print('\n     [get_data] Error: ', e, '\nSkipping to the next file.\n')
         
-        return False
+        return None, False
         
 
 
-def multipol_to_pol(data):
-    
+def data_validator(data, log):
+
+    print('\n     Validating data:')
+
+    print('\n     Number of geometries in the original file: {}'.format(len(data)))
+
+    data = remove_empty_geoms(data, log)
+
+    data = remove_non_pol_geoms(data, log)
+
+    data = multipol_to_pol(data, log)
+
+    data = remove_dimension_z(data)
+
+    return data
+
+
+
+def remove_empty_geoms(data, log):
+
+    geoms_to_be_removed_count = len(data[data.geometry == None])
+
+    print('\n        [remove_empty_geoms] Removing {} empty geometries.'.format(geoms_to_be_removed_count), log.subprocess())
+
+    filtered_data = data[data.geometry != None]
+
+    count_check(len(data), geoms_to_be_removed_count, len(filtered_data))
+
+    return filtered_data
+
+
+
+def count_check(initial_count, geoms_to_be_removed_count, final_count):
+
+    if geoms_to_be_removed_count != 0:
+
+        if final_count == initial_count - geoms_to_be_removed_count:
+
+            print('\n          [count_check] Geometry count: ok')
+
+        else:
+
+            print('\n          [count_check] Geometry count: not matching. Got {}, expecting {}.'.format(final_count, initial_count - geoms_to_be_removed_count))
+
+
+
+def remove_non_pol_geoms(data, log):
+
+    distinct_types = geometry_type_check(data)
+
+    initial_geoms_count = len(data)
+
+    removed_geoms = 0
+
+    for geom_type in distinct_types:
+
+        if geom_type != 'Polygon' and geom_type != 'MultiPolygon':
+
+            removed_geoms += len(data[data.geometry.type == geom_type])
+
+            data = data[data.geometry.type != geom_type]
+
+    print('\n        [remove_non_pol_geoms] Removing {} non-polygon geometries.'.format(removed_geoms), log.subprocess())
+
+    count_check(initial_geoms_count, removed_geoms, len(data))
+
+    return data
+
+
+
+def multipol_to_pol(data, log):
+
     distinct_types = geometry_type_check(data)
         
     if 'MultiPolygon' in distinct_types:
-            
-        new_data = data.explode()
-                
-        multipol_to_pol(new_data)
-            
-    else: new_data = data
+
+        multipol_data = data[data.geometry.type == 'MultiPolygon']
+
+        print('\n        [multipol_to_pol] Converting {} Multipolygons to polygon.'.format(len(multipol_data)), log.subprocess())
+
+        data_exp = data.explode()
+
+        multipol_data_exp = multipol_data.explode()
         
-    return new_data
+        geometry_type_check(data_exp)
+
+        count_check(len(data), len(multipol_data) - len(multipol_data_exp), len(data_exp))
+       
+        return data_exp
+
+    else: return data
 
 
 
@@ -185,10 +237,8 @@ def geometry_type_check(data):
         if pol['geometry']['type'] not in distinct_types:
             
             distinct_types.append(pol['geometry']['type'])
-            
-        else: pass
-    
-    print('      Geometry types in file: ', distinct_types)
+                
+    print('\n           [geometry_type_check] Geometry types in file: ', distinct_types)
     
     return distinct_types
 
@@ -200,41 +250,42 @@ def remove_dimension_z(data):
     
     for pol in data.geometry:
         
-        if pol.has_z:
-            
-            if pol.geom_type == 'Polygon':
+        if pol.has_z and pol.geom_type == 'Polygon':
                                 
-                lines = [xy[:2] for xy in list(pol.exterior.coords)]
+            lines = [xy[:2] for xy in list(pol.exterior.coords)]
+            
+            new_p = Polygon(lines)
+            
+            new_geo.append(new_p)
                 
-                new_p = Polygon(lines)
-                
-                new_geo.append(new_p)
-                
-    data.geometry = new_geo    
+    data.geometry = new_geo
+
+    return data 
 
 
 
-def multilines_into_pols(data):
+def self_union(data, log):
+
+    print('\n  2. Union:')
     
     try:
-    
-        data['geometry'] = [Polygon(mapping(x)['coordinates']) for x in data.geometry]
+        
+        # raw_union = gpd.overlay(data, data, how = 'union', keep_geom_type = False)
+
+        raw_union = data.sjoin(data, how="inner", predicate='intersects')
+
+        union = data_validator(raw_union, log)
+            
+        print('\n     Success. ', log.subprocess())
+
+        return union, True
         
     except Exception as e:
         
-        raise
-        
-    
-    if 'MultiLineString' in geometry_type_check(data):
-        
-        multilines_into_pols(data)
-        
-    else: pass
-    
-    print('      Conversão de linhas em polígonos: sucesso')
-    
-    return data
+        print('\n     [self_union] Error: ', e, '\nSkipping to the next file.\n')
 
+        return None, False
+    
 
 
 def export(data_to_export, operation, configs, original_file_name, log):
@@ -243,11 +294,11 @@ def export(data_to_export, operation, configs, original_file_name, log):
 
         data_to_export.to_file(str(configs.output_path + original_file_name + operation + '.shp'), driver = 'ESRI Shapefile')
         
-        print('    Export: success', str(datetime.now() - log.Start_time))
+        print('     Export: success', log.subprocess())
         
     except RuntimeError as e:
     
-        print('Error message: ', e)
+        print('     [export] Error message: ', e)
 
 
 
@@ -268,6 +319,7 @@ class process_log:
         self.Process = process
         self.Description = description
         self.Start_time = datetime.now()
+        self.Last_subprocess_stop_time = None
 
         print(str('\n[Log] Processo "' + self.Process + '": ' + self.Description + '\n' + '[Log] Início "' + self.Process + '": ' + str(self.Start_time)))
 
@@ -276,6 +328,24 @@ class process_log:
         end_time = datetime.now()
 
         print(str('[Log] Fim "' + self.Process + '": ' + str(end_time) + '\n        Duração: ' + str(datetime.now() - self.Start_time)))
+
+    def subprocess(self):
+
+        if self.Last_subprocess_stop_time == None:
+
+            self.Last_subprocess_stop_time = datetime.now()
+
+            return str(self.Last_subprocess_stop_time - self.Start_time)
+
+        else:
+
+            now = datetime.now()
+
+            subprocess_duration = now - self.Last_subprocess_stop_time
+
+            self.Last_subprocess_stop_time = now
+
+            return str(subprocess_duration)
 
 
 
