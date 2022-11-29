@@ -1,4 +1,3 @@
-import re
 import geopandas as gpd
 from shapely.geometry import shape, Polygon, MultiPolygon, LineString, MultiLineString, mapping
 import matplotlib.pyplot as plt
@@ -7,25 +6,38 @@ import datetime
 from datetime import datetime
 # from datetime import date
 import pandas as pd
+import psycopg2
+from sqlalchemy import create_engine
+import platform
 
 
 class Script_Configs:
     
     def __init__(self):
     
-        self.input_path = 'C:\\Users\\user\\Documents\\2_Projetos\\Frel_2022\\Dados\\Amazonia\\SIRENE\\'
+        self.input_path = 'C:\\Users\\user\\Documents\\2_Projetos\\Frel_2022\\Dados\\Amazonia\\SIRENE\\' if platform.system() == 'Windows' else '/mnt/c/Users/user/Documents/2_Projetos/Frel_2022/Dados/Amazonia/SIRENE/'
     
-        self.output_path = 'C:\\Users\\user\\Documents\\2_Projetos\\Frel_2022\\Dados\\Amazonia\\SIRENE\\GeoPandas\\'
+        self.output_path = 'C:\\Users\\user\\Documents\\2_Projetos\\Frel_2022\\Dados\\Amazonia\\SIRENE\\GeoPandas\\' if platform.system() == 'Windows' else '/mnt/c/Users/user/Documents/2_Projetos/Frel_2022/Dados/Amazonia/SIRENE/GeoPandas/'
         
         self.file_extention = '.shp'
+
+        self.postgis_url = 'postgresql://postgres:postgres@localhost:5432/ta_qgis_python'
         
         self.plot = True
 
         self.export_intermediary = True
+
+        self.report_to_file = True
+
+        self.script_version = '1.1'
+
+        self.run_date = datetime.now().strftime('%d_%m_%Y_%Hh_%Mm_%Ss')
+
+        self.report_file_name = str(self.output_path + 'Relatorio_Script_GeoPandas_v' + self.script_version + '_DtExec_' + self.run_date + '.txt')
         
     def input_pth( self, file_name ):
         
-        return str( self.input_path + file_name )
+        return str( self.input_path + file_name ), str( self.input_path + file_name )
 
 
 
@@ -40,25 +52,27 @@ def locate_files(folder, extension):
 
 def main():
     
-    log = process_log('main', 'Início')
-        
     configs = Script_Configs()
+        
+    log = process_log('main', 'Início', configs)
     
     files = locate_files(configs.input_path, configs.file_extention)
     
-    print('\nNumber of files located and listed for processing: ', len(files))
+    conditional_print('\nFREL- FUNCATE\nRelatório do Script de Remoção de Sobreposições\nData de Execução: {}\nSistema Operacional: {}\n\nNúmero de arquivos agrupados para processamento: {}\n'.format(configs.run_date, platform.system(), len(files)), configs)
 
     for i, file in enumerate(files):
                 
         success = trigger_algorithm(configs, file, i + 1, len(files), round((i + 1) * 100 / len(files), 1))
 
-        if success == None:
+        break
 
-            print('File "{}" NOT fully PROCESSED.'.format(file.stem))
+        # if success == None:
 
-            continue
+        #     conditional_print('O arquivo "{}" não foi completamente processado.'.format(file.stem), configs)
 
-        else: break
+        # else: break
+
+    # if configs.report_to_file: report.push(configs.output_path)
     
     log.close_log()
 
@@ -66,29 +80,29 @@ def main():
 
 def trigger_algorithm(configs, file, file_count, total_files_count, progress):
     
-    log = process_log('trigger_algorithm', '\n\nProcessing file ({}/{} - {}%): {}'.format(file_count, total_files_count, progress, file.stem))
+    log = process_log('trigger_algorithm', '\n\n--------------\n({}/{} - {}%) Processando o arquivo: "{}"\n'.format(file_count, total_files_count, progress, file.stem), configs)
     
-    input_data, success = get_data(file, log)
+    input_data, success = get_data(file, file_count, log, configs)
         
     if success == False:
         
         return None
     
-    else:
+    else: pass
     
-        union, success = self_union(input_data, log)
+        # union, success = self_union(input_data, log, configs)
 
-        if success == False:
+        # if success == False:
     
-            return None
+        #     return None
 
-        else:
+        # else:
 
-            if configs.export_intermediary:
+        #     if configs.export_intermediary:
     
-                export(union, '_un', configs, file.stem, log)
+        #         export(union, '_un', configs, file.stem, log)
 
-            else: pass
+        #     else: pass
 
 
         # diss = input_data_exp.dissolve(by = ['C_PRETORIG', 'C_PRETVIZI', 'CATEGORIG', 'CATEGVIZI', 'TIPO', 'CDW', 'CLITTER', 'CTOTAL4INV', 'CAGB', 'CBGB'], as_index=False)
@@ -104,47 +118,65 @@ def trigger_algorithm(configs, file, file_count, total_files_count, progress):
         # print('  Natural only: ', len(natural_only), 'Antropic only: ', len(antropic_only))
     
     
-        if configs.plot: plot_data(union)
+        # if configs.plot: plot_data(union)
         
     log.close_log()
 
 
 
-def get_data(file, log):
+def get_data(file, file_count, log, configs):
     
-    print('\n  1. Load file:')
+    conditional_print('\n  {}.1. Carregando o arquivo:'.format(file_count), configs)
         
     try:
     
         raw_input_data = gpd.read_file( file )
 
-        input_data = data_validator(raw_input_data, log)
+        validated_data = data_validator(raw_input_data, log, configs)
 
-        print('\n     Success: ', log.subprocess())
+        input_data = load_to_postgis(validated_data, file, configs)
+
+        conditional_print('\n     Successo: {}'.format(log.subprocess()), configs)
     
-        print('\n     Number of geometries in the original file: {}'.format(len(input_data)))
+        conditional_print('\n     Número de geometrias no arquivo após a validação: {}\n'.format(len(input_data)), configs)
         
         return input_data, True
         
     except Exception as e:
         
-        print('\n     [get_data] Error: ', e, '\nSkipping to the next file.\n')
+        conditional_print('\n     [get_data] Erro: {}\nPassando para o próximo arquivo.\n'.format(e), configs)
         
         return None, False
+
+
+def load_to_postgis(data, file, configs):
+
+    try:
+
+        engine = create_engine(configs.postgis_url)
+
+        data.to_postgis(file.stem, engine)
+
+        return data, True
         
+    except Exception as e:
+        
+        conditional_print('\n     [load_to_postgis] Erro ao copiar o dado "{}" para o banco postgis: {}\nPassando para o próximo arquivo.\n'.format(file.stem, e), configs)
+
+        return None, False
 
 
-def data_validator(data, log):
+def data_validator(data, log, configs):
 
-    print('\n     Validating data:')
+    conditional_print('\n     Validando geometrias:', configs)
 
-    print('\n     Number of geometries in the original file: {}'.format(len(data)))
+    conditional_print('\n     Número de geometrias no arquivo original: {}'.format(len(data)), configs)
 
-    data = remove_empty_geoms(data, log)
+    data = remove_empty_geoms(data, log, configs)
 
-    data = remove_non_pol_geoms(data, log)
+    data = remove_non_pol_geoms(data, log, configs)
 
-    data = multipol_to_pol(data, log)
+    data = multipol_to_pol(data, log, configs)
 
     data = remove_dimension_z(data)
 
@@ -152,75 +184,79 @@ def data_validator(data, log):
 
 
 
-def remove_empty_geoms(data, log):
+def remove_empty_geoms(data, log, configs):
 
     geoms_to_be_removed_count = len(data[data.geometry == None])
 
-    print('\n        [remove_empty_geoms] Removing {} empty geometries.'.format(geoms_to_be_removed_count), log.subprocess())
-
-    filtered_data = data[data.geometry != None]
-
-    count_check(len(data), geoms_to_be_removed_count, len(filtered_data))
-
-    return filtered_data
-
-
-
-def count_check(initial_count, geoms_to_be_removed_count, final_count):
+    filtered_data = data
 
     if geoms_to_be_removed_count != 0:
 
-        if final_count == initial_count - geoms_to_be_removed_count:
+        conditional_print('\n        [remove_empty_geoms] Removendo {} geometrias vazias. {}'.format(geoms_to_be_removed_count, log.subprocess()), configs)
 
-            print('\n          [count_check] Geometry count: ok')
+        filtered_data = data[data.geometry != None]
 
-        else:
-
-            print('\n          [count_check] Geometry count: not matching. Got {}, expecting {}.'.format(final_count, initial_count - geoms_to_be_removed_count))
-
-
-
-def remove_non_pol_geoms(data, log):
-
-    distinct_types = geometry_type_check(data)
-
-    initial_geoms_count = len(data)
-
-    removed_geoms = 0
-
-    for geom_type in distinct_types:
-
-        if geom_type != 'Polygon' and geom_type != 'MultiPolygon':
-
-            removed_geoms += len(data[data.geometry.type == geom_type])
-
-            data = data[data.geometry.type != geom_type]
-
-    print('\n        [remove_non_pol_geoms] Removing {} non-polygon geometries.'.format(removed_geoms), log.subprocess())
-
-    count_check(initial_geoms_count, removed_geoms, len(data))
+        count_check(len(data), geoms_to_be_removed_count, len(filtered_data), configs)
 
     return data
 
 
 
-def multipol_to_pol(data, log):
+def count_check(initial_count, geoms_to_be_removed_count, final_count, configs):
 
-    distinct_types = geometry_type_check(data)
+    if geoms_to_be_removed_count != 0:
+
+        if final_count == initial_count - geoms_to_be_removed_count:
+
+            conditional_print('\n          [count_check] Contagem de geometrias: ok', configs)
+
+        else:
+
+            conditional_print('\n          [count_check] Contagem de geometrias: inconsistente. Encontradas {}, esperando {}.'.format(final_count, initial_count - geoms_to_be_removed_count), configs)
+
+
+
+def remove_non_pol_geoms(data, log, configs):
+
+    distinct_types = geometry_type_check(data, configs)
+
+    initial_geoms_count = len(data)
+
+    removed_geoms_count = 0
+
+    for geom_type in distinct_types:
+
+        if geom_type != 'Polygon' and geom_type != 'MultiPolygon':
+
+            removed_geoms_count += len(data[data.geometry.type == geom_type])
+
+            data = data[data.geometry.type != geom_type]
+
+    conditional_print('\n        [remove_non_pol_geoms] Removendo {} geometrias que não são polígonos. {}'.format(removed_geoms_count, log.subprocess()), configs)
+
+    count_check(initial_geoms_count, removed_geoms_count, len(data), configs)
+
+    return data
+
+
+
+def multipol_to_pol(data, log, configs):
+
+    distinct_types = geometry_type_check(data, configs)
         
     if 'MultiPolygon' in distinct_types:
 
         multipol_data = data[data.geometry.type == 'MultiPolygon']
 
-        print('\n        [multipol_to_pol] Converting {} Multipolygons to polygon.'.format(len(multipol_data)), log.subprocess())
+        conditional_print('\n        [multipol_to_pol] Convertendo {} Multipolygons para Polygon. {}'.format(len(multipol_data), log.subprocess()), configs)
 
         data_exp = data.explode()
 
         multipol_data_exp = multipol_data.explode()
         
-        geometry_type_check(data_exp)
+        geometry_type_check(data_exp, configs)
 
-        count_check(len(data), len(multipol_data) - len(multipol_data_exp), len(data_exp))
+        count_check(len(data), len(multipol_data) - len(multipol_data_exp), len(data_exp), configs)
        
         return data_exp
 
@@ -228,7 +264,7 @@ def multipol_to_pol(data, log):
 
 
 
-def geometry_type_check(data):
+def geometry_type_check(data, configs):
     
     distinct_types = []
 
@@ -238,7 +274,7 @@ def geometry_type_check(data):
             
             distinct_types.append(pol['geometry']['type'])
                 
-    print('\n           [geometry_type_check] Geometry types in file: ', distinct_types)
+    conditional_print('\n           [geometry_type_check] Tipos de geometria encontrados: {}'.format(distinct_types), configs)
     
     return distinct_types
 
@@ -264,9 +300,9 @@ def remove_dimension_z(data):
 
 
 
-def self_union(data, log):
+def self_union(data, log, configs):
 
-    print('\n  2. Union:')
+    conditional_print('\n  2. União:', configs)
     
     try:
         
@@ -274,15 +310,15 @@ def self_union(data, log):
 
         raw_union = data.sjoin(data, how="inner", predicate='intersects')
 
-        union = data_validator(raw_union, log)
+        union = data_validator(raw_union, log, configs)
             
-        print('\n     Success. ', log.subprocess())
+        conditional_print('\n     Successo. {}'.format(log.subprocess()), configs)
 
         return union, True
         
     except Exception as e:
         
-        print('\n     [self_union] Error: ', e, '\nSkipping to the next file.\n')
+        conditional_print('\n     [self_union] Erro: {}\nPassando para o próximo arquivo.\n'.format(e), configs)
 
         return None, False
     
@@ -292,13 +328,13 @@ def export(data_to_export, operation, configs, original_file_name, log):
     
     try:
 
-        data_to_export.to_file(str(configs.output_path + original_file_name + operation + '.shp'), driver = 'ESRI Shapefile')
+        data_to_export.to_file(str(configs.output_path + original_file_name + operation + configs.run_date + '.shp'), driver = 'ESRI Shapefile')
         
-        print('     Export: success', log.subprocess())
+        conditional_print('     Exportando resultado intermeriário: successo {}'.format(log.subprocess()), configs)
         
     except RuntimeError as e:
     
-        print('     [export] Error message: ', e)
+        conditional_print('     [export] Erro na exportação. Mensagem original:\n{}\n'.format(e), configs)
 
 
 
@@ -312,22 +348,33 @@ def plot_data(*args):
 
 
 
+def conditional_print(something_to_print, conf):
+        
+    print(something_to_print)
+
+    if conf.report_to_file:
+
+        print(something_to_print, file=open(conf.report_file_name, 'a'))
+
+
+
 class process_log:
 
-    def __init__(self, process, description):
+    def __init__(self, process, description, conf):
         
         self.Process = process
         self.Description = description
         self.Start_time = datetime.now()
         self.Last_subprocess_stop_time = None
+        self.configs = conf
 
-        print(str('\n[Log] Processo "' + self.Process + '": ' + self.Description + '\n' + '[Log] Início "' + self.Process + '": ' + str(self.Start_time)))
+        conditional_print(str('\n[Log] Processo "' + self.Process + '": ' + self.Description + '\n' + '[Log] Início "' + self.Process + '": ' + str(self.Start_time)), self.configs)
 
     def close_log(self):
 
         end_time = datetime.now()
 
-        print(str('[Log] Fim "' + self.Process + '": ' + str(end_time) + '\n        Duração: ' + str(datetime.now() - self.Start_time)))
+        conditional_print(str('[Log] Fim "' + self.Process + '": ' + str(end_time) + '\n        Duração: ' + str(datetime.now() - self.Start_time)), self.configs)
 
     def subprocess(self):
 
