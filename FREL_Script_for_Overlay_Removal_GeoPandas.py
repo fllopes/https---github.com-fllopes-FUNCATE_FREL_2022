@@ -2,7 +2,7 @@ import geopandas as gpd
 from shapely.geometry import shape, Polygon, MultiPolygon, LineString, MultiLineString, mapping
 import matplotlib.pyplot as plt
 from pathlib import Path
-import datetime
+#import datetime
 from datetime import datetime
 # from datetime import date
 import pandas as pd
@@ -19,6 +19,8 @@ class Script_Configs:
     
         self.output_path = 'C:\\Users\\user\\Documents\\2_Projetos\\Frel_2022\\Dados\\Amazonia\\SIRENE\\GeoPandas\\' if platform.system() == 'Windows' else '/mnt/c/Users/user/Documents/2_Projetos/Frel_2022/Dados/Amazonia/SIRENE/GeoPandas/'
         
+        self.user_triggered = True
+
         self.file_extention = '.shp'
 
         self.postgis_url = 'postgresql://postgres:postgres@localhost:5432/ta_qgis_python'
@@ -29,7 +31,7 @@ class Script_Configs:
 
         self.report_to_file = True
 
-        self.script_version = '1.1'
+        self.script_version = '1.2'
 
         self.run_date = datetime.now().strftime('%d_%m_%Y_%Hh_%Mm_%Ss')
 
@@ -64,7 +66,21 @@ def main():
                 
         success = trigger_algorithm(configs, file, i + 1, len(files), round((i + 1) * 100 / len(files), 1))
 
-        break
+        if configs.user_triggered:
+
+            next_file = input('\nPassar para o próximo arquivo (y/n)? Utilize "t" para executar todos os demais arquivos.\n')
+
+            if next_file == 'y' or next_file == 't':
+
+                if next_file == 't':
+
+                    configs.user_triggered = False
+
+                continue
+
+            else: break
+
+        else: break
 
         # if success == None:
 
@@ -88,21 +104,27 @@ def trigger_algorithm(configs, file, file_count, total_files_count, progress):
         
         return None
     
-    else: pass
+    else:
+
+        if configs.export_intermediary:
     
-        # union, success = self_union(input_data, log, configs)
+                export(input_data, '_1Val', configs, file.stem, log)
 
-        # if success == False:
+        else: pass
     
-        #     return None
+        union, success = self_union(input_data, log, configs)
 
-        # else:
-
-        #     if configs.export_intermediary:
+        if success == False:
     
-        #         export(union, '_un', configs, file.stem, log)
+            return None
 
-        #     else: pass
+        else:
+
+            if configs.export_intermediary:
+    
+                export(union, '_2Un', configs, file.stem, log)
+
+            else: pass
 
 
         # diss = input_data_exp.dissolve(by = ['C_PRETORIG', 'C_PRETVIZI', 'CATEGORIG', 'CATEGVIZI', 'TIPO', 'CDW', 'CLITTER', 'CTOTAL4INV', 'CAGB', 'CBGB'], as_index=False)
@@ -134,13 +156,13 @@ def get_data(file, file_count, log, configs):
 
         validated_data = data_validator(raw_input_data, log, configs)
 
-        input_data = load_to_postgis(validated_data, file, configs)
+        # postgis_data = load_to_postgis(validated_data, file, configs)
 
         conditional_print('\n     Successo: {}'.format(log.subprocess()), configs)
     
-        conditional_print('\n     Número de geometrias no arquivo após a validação: {}\n'.format(len(input_data)), configs)
+        conditional_print('\n     Número de geometrias no arquivo após a validação: {}\n'.format(len(validated_data)), configs)
         
-        return input_data, True
+        return validated_data, True
         
     except Exception as e:
         
@@ -155,9 +177,13 @@ def load_to_postgis(data, file, configs):
 
         engine = create_engine(configs.postgis_url)
 
-        data.to_postgis(file.stem, engine)
+        table_name = str(file.stem + '_' + configs.run_date[:-4])
 
-        return data, True
+        data.to_postgis(table_name, engine)
+
+        conditional_print('\n     [load_to_postgis] Dado carregado com sucesso para o postgis. Tabela: "{}".\n'.format(table_name), configs)
+
+        return data, True, table_name
         
     except Exception as e:
         
@@ -178,7 +204,7 @@ def data_validator(data, log, configs):
 
     data = multipol_to_pol(data, log, configs)
 
-    data = remove_dimension_z(data)
+    data = remove_dimension_z(data, log, configs)
 
     return data
 
@@ -198,7 +224,7 @@ def remove_empty_geoms(data, log, configs):
 
         count_check(len(data), geoms_to_be_removed_count, len(filtered_data), configs)
 
-    return data
+    return filtered_data
 
 
 
@@ -212,15 +238,17 @@ def count_check(initial_count, geoms_to_be_removed_count, final_count, configs):
 
         else:
 
-            conditional_print('\n          [count_check] Contagem de geometrias: inconsistente. Encontradas {}, esperando {}.'.format(final_count, initial_count - geoms_to_be_removed_count), configs)
+            conditional_print('\n          [count_check] WARNING - Contagem de geometrias: inconsistente. Encontradas {}, esperando {}.'.format(final_count, initial_count - geoms_to_be_removed_count), configs)
 
 
 
 def remove_non_pol_geoms(data, log, configs):
 
-    distinct_types = geometry_type_check(data, configs)
+    distinct_types = geometry_type_check(data)
 
     initial_geoms_count = len(data)
+
+    removed_geoms = []
 
     removed_geoms_count = 0
 
@@ -228,11 +256,15 @@ def remove_non_pol_geoms(data, log, configs):
 
         if geom_type != 'Polygon' and geom_type != 'MultiPolygon':
 
-            removed_geoms_count += len(data[data.geometry.type == geom_type])
+            count = len(data[data.geometry.type == geom_type])
+
+            removed_geoms.append({ geom_type : count})
+
+            removed_geoms_count += removed_geoms[geom_type]
 
             data = data[data.geometry.type != geom_type]
 
-    conditional_print('\n        [remove_non_pol_geoms] Removendo {} geometrias que não são polígonos. {}'.format(removed_geoms_count, log.subprocess()), configs)
+    conditional_print('\n        [remove_non_pol_geoms] Removendo {} geometrias que não são polígonos. {} {}'.format(removed_geoms_count, (list(str(item.key + ':' + item.value + '.') for item in removed_geoms) if len(removed_geoms) > 0 else ''), log.subprocess()), configs)
 
     count_check(initial_geoms_count, removed_geoms_count, len(data), configs)
 
@@ -242,20 +274,18 @@ def remove_non_pol_geoms(data, log, configs):
 
 def multipol_to_pol(data, log, configs):
 
-    distinct_types = geometry_type_check(data, configs)
+    distinct_types = geometry_type_check(data)
         
     if 'MultiPolygon' in distinct_types:
 
         multipol_data = data[data.geometry.type == 'MultiPolygon']
 
-        conditional_print('\n        [multipol_to_pol] Convertendo {} Multipolygons para Polygon. {}'.format(len(multipol_data), log.subprocess()), configs)
+        data_exp = data.explode(ignore_index=True)
 
-        data_exp = data.explode()
+        multipol_data_exp = multipol_data.explode(ignore_index=True)
 
-        multipol_data_exp = multipol_data.explode()
+        conditional_print('\n        [multipol_to_pol] Convertendo {} Multipolygons para {} Polygons. {}'.format(len(multipol_data), len(multipol_data_exp), log.subprocess()), configs)
         
-        geometry_type_check(data_exp, configs)
-
         count_check(len(data), len(multipol_data) - len(multipol_data_exp), len(data_exp), configs)
        
         return data_exp
@@ -264,7 +294,7 @@ def multipol_to_pol(data, log, configs):
 
 
 
-def geometry_type_check(data, configs):
+def geometry_type_check(data):
     
     distinct_types = []
 
@@ -273,14 +303,12 @@ def geometry_type_check(data, configs):
         if pol['geometry']['type'] not in distinct_types:
             
             distinct_types.append(pol['geometry']['type'])
-                
-    conditional_print('\n           [geometry_type_check] Tipos de geometria encontrados: {}'.format(distinct_types), configs)
-    
+                    
     return distinct_types
 
 
 
-def remove_dimension_z(data):   
+def remove_dimension_z(data, log, configs):   
 
     new_geo = []
     
@@ -296,6 +324,11 @@ def remove_dimension_z(data):
                 
     data.geometry = new_geo
 
+    if len(new_geo) > 0:
+        
+        conditional_print('\n        [remove_dimension_z] Removendo a dimensão "z" das geometrias. {}'.format(log.subprocess()), configs)
+
+
     return data 
 
 
@@ -310,15 +343,15 @@ def self_union(data, log, configs):
 
         raw_union = data.sjoin(data, how="inner", predicate='intersects')
 
-        union = data_validator(raw_union, log, configs)
+        conditional_print('\n     [self_union] Successo. {}'.format(log.subprocess()), configs)
             
-        conditional_print('\n     Successo. {}'.format(log.subprocess()), configs)
+        # union = data_validator(raw_union, log, configs)
 
-        return union, True
+        return raw_union, True
         
     except Exception as e:
         
-        conditional_print('\n     [self_union] Erro: {}\nPassando para o próximo arquivo.\n'.format(e), configs)
+        conditional_print('\n     [self_union] Erro: "{}"\nPassando para o próximo arquivo.\n'.format(e), configs)
 
         return None, False
     
@@ -328,13 +361,13 @@ def export(data_to_export, operation, configs, original_file_name, log):
     
     try:
 
-        data_to_export.to_file(str(configs.output_path + original_file_name + operation + configs.run_date + '.shp'), driver = 'ESRI Shapefile')
+        data_to_export.to_file(str(configs.output_path + original_file_name + configs.run_date + '_' + operation + '.shp'), driver = 'ESRI Shapefile')
         
-        conditional_print('     Exportando resultado intermeriário: successo {}'.format(log.subprocess()), configs)
+        conditional_print('\n     [export] Exportando resultado intermeriário: successo {}\n'.format(log.subprocess()), configs)
         
     except RuntimeError as e:
     
-        conditional_print('     [export] Erro na exportação. Mensagem original:\n{}\n'.format(e), configs)
+        conditional_print('\n     [export] Erro na exportação do resultado intermeriário. Mensagem original:\n{}\n'.format(e), configs)
 
 
 
