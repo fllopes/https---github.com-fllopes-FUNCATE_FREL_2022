@@ -23,6 +23,8 @@ class Script_Configs:
 
         self.file_extention = '.shp'
 
+        self.load_to_postgis = False
+
         self.postgis_url = 'postgresql://postgres:postgres@localhost:5432/ta_qgis_python'
         
         self.plot = True
@@ -31,7 +33,7 @@ class Script_Configs:
 
         self.report_to_file = True
 
-        self.script_version = '1.2'
+        self.script_version = '1.3'
 
         self.run_date = datetime.now().strftime('%d_%m_%Y_%Hh_%Mm_%Ss')
 
@@ -42,14 +44,12 @@ class Script_Configs:
         return str( self.input_path + file_name ), str( self.input_path + file_name )
 
 
-
 # List all files in directory using pathlib
 def locate_files(folder, extension):
 
     located_files = [entry for entry in Path(folder).iterdir() if entry.is_file() and entry.suffix == extension]
 
     return located_files
-
 
 
 def main():
@@ -93,12 +93,11 @@ def main():
     log.close_log()
 
 
-
 def trigger_algorithm(configs, file, file_count, total_files_count, progress):
     
     log = process_log('trigger_algorithm', '\n\n--------------\n({}/{} - {}%) Processando o arquivo: "{}"\n'.format(file_count, total_files_count, progress, file.stem), configs)
     
-    input_data, success = get_data(file, file_count, log, configs)
+    loaded_data, success = get_data(file, file_count, log, configs)
         
     if success == False:
         
@@ -108,11 +107,11 @@ def trigger_algorithm(configs, file, file_count, total_files_count, progress):
 
         if configs.export_intermediary:
     
-                export(input_data, '_1Val', configs, file.stem, log)
+            export(loaded_data.file_data, '1Val', configs, file.stem, log)
 
         else: pass
     
-        union, success = self_union(input_data, log, configs)
+        union, success = self_union(loaded_data.file_data, log, configs)
 
         if success == False:
     
@@ -122,7 +121,7 @@ def trigger_algorithm(configs, file, file_count, total_files_count, progress):
 
             if configs.export_intermediary:
     
-                export(union, '_2Un', configs, file.stem, log)
+                export(union, '2Un', configs, file.stem, log)
 
             else: pass
 
@@ -145,24 +144,34 @@ def trigger_algorithm(configs, file, file_count, total_files_count, progress):
     log.close_log()
 
 
-
 def get_data(file, file_count, log, configs):
     
     conditional_print('\n  {}.1. Carregando o arquivo:'.format(file_count), configs)
-        
+    
+    class Loaded_data:
+
+        def __init__(self, file_data):
+            
+            self.file_data = file_data
+            self.postgis_data = None
+
     try:
     
         raw_input_data = gpd.read_file( file )
 
         validated_data = data_validator(raw_input_data, log, configs)
 
-        # postgis_data = load_to_postgis(validated_data, file, configs)
+        data = Loaded_data(validated_data)
+
+        if configs.load_to_postgis:
+        
+            postgis_data = load_to_postgis(validated_data, file, configs)
+
+            data.postgis_data = postgis_data
 
         conditional_print('\n     Successo: {}'.format(log.subprocess()), configs)
-    
-        conditional_print('\n     Número de geometrias no arquivo após a validação: {}\n'.format(len(validated_data)), configs)
-        
-        return validated_data, True
+            
+        return data, True
         
     except Exception as e:
         
@@ -196,18 +205,21 @@ def data_validator(data, log, configs):
 
     conditional_print('\n     Validando geometrias:', configs)
 
-    conditional_print('\n     Número de geometrias no arquivo original: {}'.format(len(data)), configs)
+    conditional_print('\n        Número de geometrias no arquivo original: {}'.format(len(data)), configs)
 
     data = remove_empty_geoms(data, log, configs)
 
     data = remove_non_pol_geoms(data, log, configs)
 
+    data = remove_repeated_geoms(data, log, configs)
+
     data = multipol_to_pol(data, log, configs)
 
     data = remove_dimension_z(data, log, configs)
 
-    return data
+    conditional_print('\n        Número de geometrias no arquivo após a validação: {}\n'.format(len(data)), configs)
 
+    return data
 
 
 def remove_empty_geoms(data, log, configs):
@@ -218,14 +230,13 @@ def remove_empty_geoms(data, log, configs):
 
     if geoms_to_be_removed_count != 0:
 
-        conditional_print('\n        [remove_empty_geoms] Removendo {} geometrias vazias. {}'.format(geoms_to_be_removed_count, log.subprocess()), configs)
-
         filtered_data = data[data.geometry != None]
 
         count_check(len(data), geoms_to_be_removed_count, len(filtered_data), configs)
 
-    return filtered_data
+    conditional_print('\n        [remove_empty_geoms] Removendo {} geometrias vazias. {}'.format(geoms_to_be_removed_count, log.subprocess()), configs)
 
+    return filtered_data
 
 
 def count_check(initial_count, geoms_to_be_removed_count, final_count, configs):
@@ -239,7 +250,6 @@ def count_check(initial_count, geoms_to_be_removed_count, final_count, configs):
         else:
 
             conditional_print('\n          [count_check] WARNING - Contagem de geometrias: inconsistente. Encontradas {}, esperando {}.'.format(final_count, initial_count - geoms_to_be_removed_count), configs)
-
 
 
 def remove_non_pol_geoms(data, log, configs):
@@ -271,7 +281,6 @@ def remove_non_pol_geoms(data, log, configs):
     return data
 
 
-
 def multipol_to_pol(data, log, configs):
 
     distinct_types = geometry_type_check(data)
@@ -293,7 +302,6 @@ def multipol_to_pol(data, log, configs):
     else: return data
 
 
-
 def geometry_type_check(data):
     
     distinct_types = []
@@ -305,7 +313,6 @@ def geometry_type_check(data):
             distinct_types.append(pol['geometry']['type'])
                     
     return distinct_types
-
 
 
 def remove_dimension_z(data, log, configs):   
@@ -321,16 +328,33 @@ def remove_dimension_z(data, log, configs):
             new_p = Polygon(lines)
             
             new_geo.append(new_p)
+
+    if len(new_geo):
                 
-    data.geometry = new_geo
+        data.geometry = new_geo
 
-    if len(new_geo) > 0:
+    if len(new_geo) == 0:
         
-        conditional_print('\n        [remove_dimension_z] Removendo a dimensão "z" das geometrias. {}'.format(log.subprocess()), configs)
+        conditional_print('\n        [remove_dimension_z] Removendo a dimensão "z" das geometrias: não foi necessário. {}'.format(log.subprocess()), configs)
 
+    else:
+
+        conditional_print('\n        [remove_dimension_z] Removendo a dimensão "z" das geometrias: ok. {}'.format(log.subprocess()), configs)
 
     return data 
 
+
+def remove_repeated_geoms(data, log, configs):
+
+    initial_count = len(data)
+
+    data = data.drop_duplicates(ignore_index=True)  # Remove elementos com todas as colunas iguais, mantendo apenas o primeiro deles. Para especificar colunas, informar uma lista: drop_duplicates(['C_PRETORIG'])
+
+    final_count = len(data)
+
+    conditional_print('\n        [remove_repeated_geoms] Removendo {} itens duplicados (geometrias e classes idênticas). {}'.format(initial_count - final_count, log.subprocess()), configs)
+
+    return data
 
 
 def self_union(data, log, configs):
@@ -345,30 +369,30 @@ def self_union(data, log, configs):
 
         conditional_print('\n     [self_union] Successo. {}'.format(log.subprocess()), configs)
             
-        # union = data_validator(raw_union, log, configs)
+        validated_union = data_validator(raw_union, log, configs)
 
-        return raw_union, True
+        return validated_union, True
         
     except Exception as e:
         
         conditional_print('\n     [self_union] Erro: "{}"\nPassando para o próximo arquivo.\n'.format(e), configs)
 
         return None, False
-    
 
 
 def export(data_to_export, operation, configs, original_file_name, log):
     
     try:
 
-        data_to_export.to_file(str(configs.output_path + original_file_name + configs.run_date + '_' + operation + '.shp'), driver = 'ESRI Shapefile')
+        file_name = str(configs.output_path + original_file_name + '_' + configs.run_date + '_' + operation + '.shp')
+
+        data_to_export.to_file(file_name, driver = 'ESRI Shapefile')
         
-        conditional_print('\n     [export] Exportando resultado intermeriário: successo {}\n'.format(log.subprocess()), configs)
+        conditional_print('\n     [export] Exportando resultado intermeriário (arquivo: {}): successo {}\n'.format(file_name, log.subprocess()), configs)
         
     except RuntimeError as e:
     
         conditional_print('\n     [export] Erro na exportação do resultado intermeriário. Mensagem original:\n{}\n'.format(e), configs)
-
 
 
 def plot_data(*args):
@@ -380,7 +404,6 @@ def plot_data(*args):
         data.plot(ax = ax)
 
 
-
 def conditional_print(something_to_print, conf):
         
     print(something_to_print)
@@ -388,7 +411,6 @@ def conditional_print(something_to_print, conf):
     if conf.report_to_file:
 
         print(something_to_print, file=open(conf.report_file_name, 'a'))
-
 
 
 class process_log:
@@ -426,7 +448,6 @@ class process_log:
             self.Last_subprocess_stop_time = now
 
             return str(subprocess_duration)
-
 
 
 main()
@@ -508,7 +529,16 @@ main()
 
 # data1_antrop = data1[data1.TIPO == 'ANTROPIZADA']
 
-#data1_antrop.plot(cmap = 'hsv', column = 'TIPO' , figsize = (10,8))
+# data2_antrop = data1[(data1.TIPO == 'ANTROPIZADA') & (dado_uniao.C_PRETORIG == 'As')]
+
+# data1_antrop.plot(cmap = 'hsv', column = 'TIPO' , figsize = (10,8))
+
+
+# 3.4 Looping through items:
+
+# for idx in data.index:
+
+#    geom = data[data.index == idx].geometry
    
 
 
