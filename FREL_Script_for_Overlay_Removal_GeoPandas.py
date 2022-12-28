@@ -1,15 +1,15 @@
 import geopandas as gpd
+import numpy
 from shapely.geometry import shape, Polygon, MultiPolygon, LineString, MultiLineString, mapping
 import matplotlib.pyplot as plt
 from pathlib import Path
-#import datetime
 from datetime import datetime
-# from datetime import date
 import pandas as pd
 import psycopg2
 from sqlalchemy import create_engine
 import platform
 
+data_for_outside_use = []
 
 class Script_Configs:
     
@@ -111,7 +111,7 @@ def trigger_algorithm(configs, file, file_count, total_files_count, progress):
 
         else: pass
     
-        union, success = self_union(loaded_data.file_data, log, configs)
+        overlay, success = self_overlay(loaded_data.file_data, log, configs)
 
         if success == False:
     
@@ -121,7 +121,7 @@ def trigger_algorithm(configs, file, file_count, total_files_count, progress):
 
             if configs.export_intermediary:
     
-                export(union, '2Un', configs, file.stem, log)
+                export(overlay, '2Ovr', configs, file.stem, log)
 
             else: pass
 
@@ -159,19 +159,23 @@ def get_data(file, file_count, log, configs):
     
         raw_input_data = gpd.read_file( file )
 
+        data_for_outside_use.append(raw_input_data)
+
         validated_data = data_validator(raw_input_data, log, configs)
 
-        data = Loaded_data(validated_data)
+        data_for_outside_use.append(validated_data)
+
+        loaded_data_class = Loaded_data(validated_data)
 
         if configs.load_to_postgis:
         
             postgis_data = load_to_postgis(validated_data, file, configs)
 
-            data.postgis_data = postgis_data
+            loaded_data_class.postgis_data = postgis_data
 
         conditional_print('\n     Successo: {}'.format(log.subprocess()), configs)
             
-        return data, True
+        return loaded_data_class, True
         
     except Exception as e:
         
@@ -203,7 +207,7 @@ def load_to_postgis(data, file, configs):
 
 def data_validator(data, log, configs):
 
-    conditional_print('\n     Validando geometrias:', configs)
+    conditional_print('\n     [data_validator] Validando geometrias:', configs)
 
     conditional_print('\n        Número de geometrias no arquivo original: {}'.format(len(data)), configs)
 
@@ -218,6 +222,8 @@ def data_validator(data, log, configs):
     data = remove_dimension_z(data, log, configs)
 
     conditional_print('\n        Número de geometrias no arquivo após a validação: {}\n'.format(len(data)), configs)
+
+    conditional_print('\n        [data_validator] Sucesso. {}'.format(log.subprocess()), configs)
 
     return data
 
@@ -258,7 +264,7 @@ def remove_non_pol_geoms(data, log, configs):
 
     initial_geoms_count = len(data)
 
-    removed_geoms = []
+    removed_geoms = {}
 
     removed_geoms_count = 0
 
@@ -268,13 +274,13 @@ def remove_non_pol_geoms(data, log, configs):
 
             count = len(data[data.geometry.type == geom_type])
 
-            removed_geoms.append({ geom_type : count})
+            removed_geoms[geom_type] = count
 
-            removed_geoms_count += removed_geoms[geom_type]
+            removed_geoms_count += count
 
             data = data[data.geometry.type != geom_type]
 
-    conditional_print('\n        [remove_non_pol_geoms] Removendo {} geometrias que não são polígonos. {} {}'.format(removed_geoms_count, (list(str(item.key + ':' + item.value + '.') for item in removed_geoms) if len(removed_geoms) > 0 else ''), log.subprocess()), configs)
+    conditional_print('\n        [remove_non_pol_geoms] Removendo {} geometrias que não são polígonos. {} {}'.format(removed_geoms_count, ([str(k + ':' + str(v) + '.') for k, v in removed_geoms.items()] if len(removed_geoms) > 0 else ''), log.subprocess()), configs)
 
     count_check(initial_geoms_count, removed_geoms_count, len(data), configs)
 
@@ -357,27 +363,145 @@ def remove_repeated_geoms(data, log, configs):
     return data
 
 
-def self_union(data, log, configs):
+def self_overlay(data, log, configs):
 
     conditional_print('\n  2. União:', configs)
     
     try:
         
-        # raw_union = gpd.overlay(data, data, how = 'union', keep_geom_type = False)
+        raw_overlay = gpd.overlay(data, data, how = 'intersection', keep_geom_type = False)
 
-        raw_union = data.sjoin(data, how="inner", predicate='intersects')
+        # raw_sjoin = data.sjoin(data, how="inner", predicate='intersects')
 
         conditional_print('\n     [self_union] Successo. {}'.format(log.subprocess()), configs)
             
-        validated_union = data_validator(raw_union, log, configs)
+        validated_overlay = data_validator(raw_overlay, log, configs)
 
-        return validated_union, True
+        global data_for_outside_use
+
+        data_for_outside_use.append(validated_overlay)
+
+        ready_overlay = data_cleaner(validated_overlay, log, configs)
+
+        data_for_outside_use.append(ready_overlay)
+
+        return ready_overlay, True
         
     except Exception as e:
+
+        raise
         
         conditional_print('\n     [self_union] Erro: "{}"\nPassando para o próximo arquivo.\n'.format(e), configs)
 
         return None, False
+
+
+def data_cleaner(data, log, configs):
+
+    conditional_print('\n     [data_cleaner] Limpando o output:', configs)
+
+    single_geoms = data.drop_duplicates(['geometry']).geometry
+
+    for geom in single_geoms:
+
+        data = same_geom_cleaner(data[data.geometry == geom], data, log, configs)
+
+    conditional_print('\n     [data_cleaner] Successo. {}'.format(log.subprocess()), configs)
+
+
+def same_geom_cleaner(filtered_data, data, log, configs):
+
+    conditional_print('\n       [same_geom_cleaner] Tratando casos com geometrias idênticas:', configs)
+
+    class Pol_geoseries:
+
+        def __init__(self, pol):
+
+            self.pol = pol
+            self.index_left = pol.name
+            self.left_attrs = Pol_attrs(pol, True)
+            self.right_attrs = Pol_attrs(pol, False)
+            self.index_right = pol.index_righ
+            self.same_left_right_attrs_check = True if ((self.left_attrs.C_PRETORIG == self.right_attrs.C_PRETORIG) & (self.left_attrs.C_PRETVIZI == self.right_attrs.C_PRETVIZI) & (self.left_attrs.CATEGORIG == self.right_attrs.CATEGORIG) & (self.left_attrs.CATEGVIZI == self.right_attrs.CATEGVIZI) & (self.left_attrs.TIPO == self.right_attrs.TIPO) & (self.left_attrs.CDW == self.right_attrs.CDW) & (self.left_attrs.CLITTER == self.right_attrs.CLITTER) & (self.left_attrs.CTOTAL4INV == self.right_attrs.CTOTAL4INV) & (self.left_attrs.CAGB == self.right_attrs.CAGB) & (self.left_attrs.CBGB == self.right_attrs.CBGB)) else False
+            self.cross_attrs_indexes = []
+            self.delete = False
+   
+
+    class Pol_attrs:
+
+        def __init__(self, pol, left_side):
+
+            self.C_PRETORIG = pol.C_PRETORIG if left_side else pol.C_PRETOR_1
+            self.C_PRETVIZI = pol.C_PRETVIZI if left_side else pol.C_PRETVI_1
+            self.CATEGORIG = pol.CATEGORIG_ if left_side else pol.CATEGORI_1
+            self.CATEGVIZI = pol.CATEGVIZI_ if left_side else pol.CATEGVIZ_1
+            self.TIPO = pol.TIPO_left if left_side else pol.TIPO_right
+            self.CDW = (None if numpy.isnan(pol.CDW_left) else pol.CDW_left) if left_side else (None if numpy.isnan(pol.CDW_right) else pol.CDW_right)
+            self.CLITTER = (None if numpy.isnan(pol.CLITTER_le) else pol.CLITTER_le) if left_side else (None if numpy.isnan(pol.CLITTER_ri) else pol.CLITTER_ri)
+            self.CTOTAL4INV = (None if numpy.isnan(pol.CTOTAL4INV) else pol.CTOTAL4INV) if left_side else (None if numpy.isnan(pol.CTOTAL4I_1) else pol.CTOTAL4I_1)
+            self.CAGB = (None if numpy.isnan(pol.CAGB_left) else pol.CAGB_left) if left_side else (None if numpy.isnan(pol.CAGB_right) else pol.CAGB_right)
+            self.CBGB = (None if numpy.isnan(pol.CBGB_left) else pol.CBGB_left) if left_side else (None if numpy.isnan(pol.CBGB_right) else pol.CBGB_right)
+
+    same_left_right_attrs_pols = []
+
+    dif_left_right_attrs_pols = []
+
+    for idx in filtered_data.index:
+
+        pol_geos = Pol_geoseries(filtered_data.iloc[idx])
+
+        if pol_geos.same_left_right_attrs_check == True:
+
+            same_left_right_attrs_pols.append(pol_geos)
+
+        else:
+
+            dif_left_right_attrs_pols.append(pol_geos)
+
+    data = crossed_attrs_cleaner(dif_left_right_attrs_pols, data, log, configs)
+
+    conditional_print('\n       [same_geom_cleaner] Successo. {}'.format(log.subprocess()), configs)
+
+    return data
+
+
+def crossed_attrs_cleaner(dif_left_right_attrs_pols, data, log, configs):
+
+    conditional_print('\n           [crossed_attrs_cleaner] Tratando casos com atributos idênticos, porém cruzados:', configs)
+
+    for i, pol_geos in enumerate(dif_left_right_attrs_pols):
+
+        while j := (i + 1) <= (len(dif_left_right_attrs_pols) - 1):
+
+            left_right = left_right_equality(pol_geos, dif_left_right_attrs_pols[j])
+
+            if left_right == True:
+
+                right_left = left_right_equality(dif_left_right_attrs_pols[j], pol_geos)
+
+                if right_left == True:
+
+                    pol_geos.cross_attrs_indexes.append(dif_left_right_attrs_pols[j].index_left)
+
+                    dif_left_right_attrs_pols[j].delete == True
+
+                    conditional_print('\n              [crossed_attrs_cleaner] Index principal: {}. Index marcado para deleção: {}'.format(pol_geos.index_left, dif_left_right_attrs_pols[j].index_left), configs)
+                    
+                    data = data[data.index != dif_left_right_attrs_pols[j].index_left]
+
+    conditional_print('\n           [crossed_attrs_cleaner] Successo. {}'.format(log.subprocess()), configs)
+
+    return data
+
+
+def left_right_equality(pol_geos_1, pol_geos_2):
+
+    if ((pol_geos_1.left_attrs.C_PRETORIG == pol_geos_2.right_attrs.C_PRETORIG) & (pol_geos_1.left_attrs.C_PRETVIZI == pol_geos_2.right_attrs.C_PRETVIZI) & (pol_geos_1.left_attrs.CATEGORIG == pol_geos_2.right_attrs.CATEGORIG) & (pol_geos_1.left_attrs.CATEGVIZI == pol_geos_2.right_attrs.CATEGVIZI) & (pol_geos_1.left_attrs.TIPO == pol_geos_2.right_attrs.TIPO) & (pol_geos_1.left_attrs.CDW == pol_geos_2.right_attrs.CDW) & (pol_geos_1.left_attrs.CLITTER == pol_geos_2.right_attrs.CLITTER) & (pol_geos_1.left_attrs.CTOTAL4INV == pol_geos_2.right_attrs.CTOTAL4INV) & (pol_geos_1.left_attrs.CAGB == pol_geos_2.right_attrs.CAGB) & (pol_geos_1.left_attrs.CBGB == pol_geos_2.right_attrs.CBGB)):
+
+        return True
+
+    else: return False
+
 
 
 def export(data_to_export, operation, configs, original_file_name, log):
@@ -496,7 +620,7 @@ main()
         
 #data1.plot(figsize=(10,8))
 
-#data1.plot( color = 'blue', edgecolor = 'black')
+#data1.plot( color = 'blue', edgecolor = 'black', alpha=0.5)
 
 #data1.plot(cmap = 'hsv', column = 'TIPO' , figsize = (10,8))
 
