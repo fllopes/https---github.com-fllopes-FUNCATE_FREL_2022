@@ -159,11 +159,11 @@ def get_data(file, file_count, log, configs):
     
         raw_input_data = gpd.read_file( file )
 
-        data_for_outside_use.append(raw_input_data)
+        data_for_outside_use.append({'raw_data': raw_input_data})
 
         validated_data = data_validator(raw_input_data, log, configs)
 
-        data_for_outside_use.append(validated_data)
+        data_for_outside_use.append({'validated_data': validated_data})
 
         loaded_data_class = Loaded_data(validated_data)
 
@@ -379,11 +379,11 @@ def self_overlay(data, log, configs):
 
         global data_for_outside_use
 
-        data_for_outside_use.append(validated_overlay)
+        data_for_outside_use.append({'validated_overlay':validated_overlay})
 
         ready_overlay = data_cleaner(validated_overlay, log, configs)
 
-        data_for_outside_use.append(ready_overlay)
+        data_for_outside_use.append({'cleansed_overlay':ready_overlay})
 
         return ready_overlay, True
         
@@ -408,6 +408,8 @@ def data_cleaner(data, log, configs):
 
     conditional_print('\n     [data_cleaner] Successo. {}'.format(log.subprocess()), configs)
 
+    return data
+
 
 def same_geom_cleaner(filtered_data, data, log, configs):
 
@@ -421,7 +423,6 @@ def same_geom_cleaner(filtered_data, data, log, configs):
             self.index_left = pol.name
             self.left_attrs = Pol_attrs(pol, True)
             self.right_attrs = Pol_attrs(pol, False)
-            self.index_right = pol.index_righ
             self.same_left_right_attrs_check = True if ((self.left_attrs.C_PRETORIG == self.right_attrs.C_PRETORIG) & (self.left_attrs.C_PRETVIZI == self.right_attrs.C_PRETVIZI) & (self.left_attrs.CATEGORIG == self.right_attrs.CATEGORIG) & (self.left_attrs.CATEGVIZI == self.right_attrs.CATEGVIZI) & (self.left_attrs.TIPO == self.right_attrs.TIPO) & (self.left_attrs.CDW == self.right_attrs.CDW) & (self.left_attrs.CLITTER == self.right_attrs.CLITTER) & (self.left_attrs.CTOTAL4INV == self.right_attrs.CTOTAL4INV) & (self.left_attrs.CAGB == self.right_attrs.CAGB) & (self.left_attrs.CBGB == self.right_attrs.CBGB)) else False
             self.cross_attrs_indexes = []
             self.delete = False
@@ -431,16 +432,16 @@ def same_geom_cleaner(filtered_data, data, log, configs):
 
         def __init__(self, pol, left_side):
 
-            self.C_PRETORIG = pol.C_PRETORIG if left_side else pol.C_PRETOR_1
-            self.C_PRETVIZI = pol.C_PRETVIZI if left_side else pol.C_PRETVI_1
-            self.CATEGORIG = pol.CATEGORIG_ if left_side else pol.CATEGORI_1
-            self.CATEGVIZI = pol.CATEGVIZI_ if left_side else pol.CATEGVIZ_1
-            self.TIPO = pol.TIPO_left if left_side else pol.TIPO_right
-            self.CDW = (None if numpy.isnan(pol.CDW_left) else pol.CDW_left) if left_side else (None if numpy.isnan(pol.CDW_right) else pol.CDW_right)
-            self.CLITTER = (None if numpy.isnan(pol.CLITTER_le) else pol.CLITTER_le) if left_side else (None if numpy.isnan(pol.CLITTER_ri) else pol.CLITTER_ri)
-            self.CTOTAL4INV = (None if numpy.isnan(pol.CTOTAL4INV) else pol.CTOTAL4INV) if left_side else (None if numpy.isnan(pol.CTOTAL4I_1) else pol.CTOTAL4I_1)
-            self.CAGB = (None if numpy.isnan(pol.CAGB_left) else pol.CAGB_left) if left_side else (None if numpy.isnan(pol.CAGB_right) else pol.CAGB_right)
-            self.CBGB = (None if numpy.isnan(pol.CBGB_left) else pol.CBGB_left) if left_side else (None if numpy.isnan(pol.CBGB_right) else pol.CBGB_right)
+            self.C_PRETORIG = pol.C_PRETORIG_1 if left_side else pol.C_PRETORIG_2
+            self.C_PRETVIZI = pol.C_PRETVIZI_1 if left_side else pol.C_PRETVIZI_2
+            self.CATEGORIG = pol.CATEGORIG_1 if left_side else pol.CATEGORIG_2
+            self.CATEGVIZI = pol.CATEGVIZI_1 if left_side else pol.CATEGVIZI_2
+            self.TIPO = pol.TIPO_1 if left_side else pol.TIPO_2
+            self.CDW = (None if numpy.isnan(pol.CDW_1) else pol.CDW_1) if left_side else (None if numpy.isnan(pol.CDW_2) else pol.CDW_2)
+            self.CLITTER = (None if numpy.isnan(pol.CLITTER_1) else pol.CLITTER_1) if left_side else (None if numpy.isnan(pol.CLITTER_2) else pol.CLITTER_2)
+            self.CTOTAL4INV = (None if numpy.isnan(pol.CTOTAL4INV_1) else pol.CTOTAL4INV_1) if left_side else (None if numpy.isnan(pol.CTOTAL4INV_2) else pol.CTOTAL4INV_2)
+            self.CAGB = (None if numpy.isnan(pol.CAGB_1) else pol.CAGB_1) if left_side else (None if numpy.isnan(pol.CAGB_2) else pol.CAGB_2)
+            self.CBGB = (None if numpy.isnan(pol.CBGB_1) else pol.CBGB_1) if left_side else (None if numpy.isnan(pol.CBGB_2) else pol.CBGB_2)
 
     same_left_right_attrs_pols = []
 
@@ -448,7 +449,7 @@ def same_geom_cleaner(filtered_data, data, log, configs):
 
     for idx in filtered_data.index:
 
-        pol_geos = Pol_geoseries(filtered_data.iloc[idx])
+        pol_geos = Pol_geoseries(data.iloc[idx])
 
         if pol_geos.same_left_right_attrs_check == True:
 
@@ -485,7 +486,7 @@ def crossed_attrs_cleaner(dif_left_right_attrs_pols, data, log, configs):
 
                     dif_left_right_attrs_pols[j].delete == True
 
-                    conditional_print('\n              [crossed_attrs_cleaner] Index principal: {}. Index marcado para deleção: {}'.format(pol_geos.index_left, dif_left_right_attrs_pols[j].index_left), configs)
+                    # conditional_print('\n              [crossed_attrs_cleaner] Index principal: {}. Index marcado para deleção: {}'.format(pol_geos.index_left, dif_left_right_attrs_pols[j].index_left), configs)
                     
                     data = data[data.index != dif_left_right_attrs_pols[j].index_left]
 
