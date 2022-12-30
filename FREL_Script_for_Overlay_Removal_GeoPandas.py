@@ -398,7 +398,7 @@ def self_overlay(data, log, configs):
 
 def data_cleaner(data, log, configs):
 
-    conditional_print('\n     [data_cleaner] Limpando o output:', configs)
+    conditional_print('\n     [data_cleaner] Limpando o output:\n       Casos com geometrias idênticas e classes repetidas ou cruzadas:', configs)
 
     single_geoms = data.drop_duplicates(['geometry']).geometry
 
@@ -412,8 +412,6 @@ def data_cleaner(data, log, configs):
 
 
 def same_geom_cleaner(filtered_data, data, log, configs):
-
-    conditional_print('\n       [same_geom_cleaner] Tratando casos com geometrias idênticas:', configs)
 
     class Pol_geoseries:
 
@@ -459,6 +457,8 @@ def same_geom_cleaner(filtered_data, data, log, configs):
 
             dif_left_right_attrs_pols.append(pol_geos)
 
+    data = same_attrs_cleaner(same_left_right_attrs_pols, data, log, configs)
+
     data = crossed_attrs_cleaner(dif_left_right_attrs_pols, data, log, configs)
 
     conditional_print('\n       [same_geom_cleaner] Successo. {}'.format(log.subprocess()), configs)
@@ -466,9 +466,12 @@ def same_geom_cleaner(filtered_data, data, log, configs):
     return data
 
 
-def crossed_attrs_cleaner(dif_left_right_attrs_pols, data, log, configs):
+def same_attrs_cleaner(same_left_right_attrs_pols, data, log, configs):
 
-    conditional_print('\n           [crossed_attrs_cleaner] Tratando casos com atributos idênticos, porém cruzados:', configs)
+    pass # PAREI AQUI: FALTA IMPLEMENTAR A REMOÇÃO DOS CASOS COM MESMOS ATRIBUDOS LEFT E RIGHT, MANTENDO UM DELES, PROVAVELMNENTE. PENSAR BEM.
+
+
+def crossed_attrs_cleaner(dif_left_right_attrs_pols, data, log, configs):
 
     for i, pol_geos in enumerate(dif_left_right_attrs_pols):
 
@@ -489,8 +492,6 @@ def crossed_attrs_cleaner(dif_left_right_attrs_pols, data, log, configs):
                     # conditional_print('\n              [crossed_attrs_cleaner] Index principal: {}. Index marcado para deleção: {}'.format(pol_geos.index_left, dif_left_right_attrs_pols[j].index_left), configs)
                     
                     data = data[data.index != dif_left_right_attrs_pols[j].index_left]
-
-    conditional_print('\n           [crossed_attrs_cleaner] Successo. {}'.format(log.subprocess()), configs)
 
     return data
 
