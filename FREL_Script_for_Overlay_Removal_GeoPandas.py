@@ -354,7 +354,7 @@ def remove_repeated_geoms(data, log, configs):
 
     initial_count = len(data)
 
-    data = data.drop_duplicates(ignore_index=True)  # Remove elementos com todas as colunas iguais, mantendo apenas o primeiro deles. Para especificar colunas, informar uma lista: drop_duplicates(['C_PRETORIG'])
+    data = data.drop_duplicates(ignore_index=True)  # Remove elementos com todas as colunas iguais, mantendo apenas o primeiro deles. Para especificar colunas, informar uma lista: drop_duplicates(subset=['C_PRETORIG'])
 
     final_count = len(data)
 
@@ -400,11 +400,27 @@ def data_cleaner(data, log, configs):
 
     conditional_print('\n     [data_cleaner] Limpando o output:\n       Casos com geometrias idênticas e classes repetidas ou cruzadas:', configs)
 
-    single_geoms = data.drop_duplicates(['geometry']).geometry
+    # single_data = data.drop_duplicates(subset=['geometry'], ignore_index=True)
 
-    for geom in single_geoms:
+    # single_data = []
 
-        data = same_geom_cleaner(data[data.geometry == geom], data, log, configs)
+    # for pol in data:
+
+    # polygon1.equals_exact(polygon2,1e-6)
+
+    # print('Len single_data: ', len(single_data))
+
+    # conditional_print('\n     [data_cleaner] Processando {} pacotes de geometrias. Tempo de mapeamento: {}'.format(len(single_data), log.subprocess()), configs)
+
+    cleaning_count = 0
+    
+    for geom in data.geometry:
+
+        cleaning_count += 1
+        
+        data = same_geom_cleaner(data[data.geometry == geom], data, log, configs) if len(data[data.geometry == geom]) > 1 else data
+
+    conditional_print('\n     [data_cleaner] Processando {} pacotes de geometrias. Tempo de mapeamento: {}'.format(cleaning_count, log.subprocess()), configs)
 
     conditional_print('\n     [data_cleaner] Successo. {}'.format(log.subprocess()), configs)
 
@@ -457,11 +473,9 @@ def same_geom_cleaner(filtered_data, data, log, configs):
 
             dif_left_right_attrs_pols.append(pol_geos)
 
-    data = same_attrs_cleaner(same_left_right_attrs_pols, data, log, configs)
+    # data = same_attrs_cleaner(same_left_right_attrs_pols, data, log, configs) if len(same_left_right_attrs_pols) else data
 
-    data = crossed_attrs_cleaner(dif_left_right_attrs_pols, data, log, configs)
-
-    conditional_print('\n       [same_geom_cleaner] Successo. {}'.format(log.subprocess()), configs)
+    data = crossed_attrs_cleaner(dif_left_right_attrs_pols, data, log, configs) if len(dif_left_right_attrs_pols) else data
 
     return data
 
@@ -472,6 +486,8 @@ def same_attrs_cleaner(same_left_right_attrs_pols, data, log, configs):
 
 
 def crossed_attrs_cleaner(dif_left_right_attrs_pols, data, log, configs):
+
+    conditional_print('\n        [crossed_attrs_cleaner] Procesando {} geometrias com diferentes atributos na direita e na esquerda.'.format(len(dif_left_right_attrs_pols)), configs)
 
     for i, pol_geos in enumerate(dif_left_right_attrs_pols):
 
@@ -492,6 +508,10 @@ def crossed_attrs_cleaner(dif_left_right_attrs_pols, data, log, configs):
                     # conditional_print('\n              [crossed_attrs_cleaner] Index principal: {}. Index marcado para deleção: {}'.format(pol_geos.index_left, dif_left_right_attrs_pols[j].index_left), configs)
                     
                     data = data[data.index != dif_left_right_attrs_pols[j].index_left]
+
+            j += 1
+
+    conditional_print('\n        [same_geom_cleaner] Successo. {}'.format(log.subprocess()), configs)
 
     return data
 
