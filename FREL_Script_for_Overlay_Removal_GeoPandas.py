@@ -400,18 +400,6 @@ def data_cleaner(data, log, configs):
 
     conditional_print('\n     [data_cleaner] Limpando o output:\n       Casos com geometrias idênticas e classes repetidas ou cruzadas:', configs)
 
-    # single_data = data.drop_duplicates(subset=['geometry'], ignore_index=True)
-
-    # single_data = []
-
-    # for pol in data:
-
-    # polygon1.equals_exact(polygon2,1e-6)
-
-    # print('Len single_data: ', len(single_data))
-
-    # conditional_print('\n     [data_cleaner] Processando {} pacotes de geometrias. Tempo de mapeamento: {}'.format(len(single_data), log.subprocess()), configs)
-
     cleaning_count = 0
     
     for geom in data.geometry:
@@ -427,7 +415,7 @@ def data_cleaner(data, log, configs):
     return data
 
 
-def same_geom_cleaner(filtered_data, data, log, configs):
+def same_geom_cleaner(same_geom_data_pack, data, log, configs):
 
     class Pol_geoseries:
 
@@ -461,7 +449,7 @@ def same_geom_cleaner(filtered_data, data, log, configs):
 
     dif_left_right_attrs_pols = []
 
-    for idx in filtered_data.index:
+    for idx in same_geom_data_pack.index:
 
         pol_geos = Pol_geoseries(data.iloc[idx])
 
@@ -475,12 +463,14 @@ def same_geom_cleaner(filtered_data, data, log, configs):
 
     # data = same_attrs_cleaner(same_left_right_attrs_pols, data, log, configs) if len(same_left_right_attrs_pols) else data
 
-    data = crossed_attrs_cleaner(dif_left_right_attrs_pols, data, log, configs) if len(dif_left_right_attrs_pols) else data
+    data = crossed_attrs_cleaner(dif_left_right_attrs_pols, data, log, configs) if len(dif_left_right_attrs_pols) >= 2 else data
 
     return data
 
 
 def same_attrs_cleaner(same_left_right_attrs_pols, data, log, configs):
+
+    conditional_print('\n        [same_attrs_cleaner] Procesando {} geometrias com atributos repetidos na direita e na esquerda.'.format(len(same_left_right_attrs_pols)), configs)
 
     pass # PAREI AQUI: FALTA IMPLEMENTAR A REMOÇÃO DOS CASOS COM MESMOS ATRIBUDOS LEFT E RIGHT, MANTENDO UM DELES, PROVAVELMNENTE. PENSAR BEM.
 
@@ -491,7 +481,9 @@ def crossed_attrs_cleaner(dif_left_right_attrs_pols, data, log, configs):
 
     for i, pol_geos in enumerate(dif_left_right_attrs_pols):
 
-        while j := (i + 1) <= (len(dif_left_right_attrs_pols) - 1):
+        j = i + 1
+
+        while j <= (len(dif_left_right_attrs_pols) - 1):
 
             left_right = left_right_equality(pol_geos, dif_left_right_attrs_pols[j])
 
