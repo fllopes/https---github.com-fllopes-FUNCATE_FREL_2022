@@ -400,22 +400,33 @@ def data_cleaner(data, log, configs):
 
     conditional_print('\n     [data_cleaner] Limpando o output:\n       Casos com geometrias idênticas e classes repetidas ou cruzadas:', configs)
 
-    cleaning_count = 0
+    geom_pack_count = 0
+
+    deletion_count = 0
     
     for geom in data.geometry:
 
-        cleaning_count += 1
-        
-        data = same_geom_cleaner(data[data.geometry == geom], data, log, configs) if len(data[data.geometry == geom]) > 1 else data
+        # if geom_pack_count > 200:
 
-    conditional_print('\n     [data_cleaner] Processando {} pacotes de geometrias. Tempo de mapeamento: {}'.format(cleaning_count, log.subprocess()), configs)
+        #     break
+
+        geom_pack_count += 1
+
+        if len(data[data.geometry == geom]) > 1:
+        
+            data, deletion_count = same_geom_cleaner(data[data.geometry == geom], data, deletion_count)
+
+    conditional_print('\n     [data_cleaner] Foram processados {} pacotes de geometrias. Foram eliminados {} itens.'.format(geom_pack_count, deletion_count), configs)
 
     conditional_print('\n     [data_cleaner] Successo. {}'.format(log.subprocess()), configs)
 
     return data
 
 
-def same_geom_cleaner(same_geom_data_pack, data, log, configs):
+def same_geom_cleaner(same_geom_data_pack, data, deletion_count):
+
+    # Esse método organiza os dados com geometrias idênticas e executa elgoritmos de limpeza.
+    # Os elementos idênticos (geometria e atributos) são eliminados na validação e assume-se que nesse ponto não existirão.
 
     class Pol_geoseries:
 
@@ -461,23 +472,39 @@ def same_geom_cleaner(same_geom_data_pack, data, log, configs):
 
             dif_left_right_attrs_pols.append(pol_geos)
 
-    # data = same_attrs_cleaner(same_left_right_attrs_pols, data, log, configs) if len(same_left_right_attrs_pols) else data
+    if len(same_left_right_attrs_pols):
 
-    data = crossed_attrs_cleaner(dif_left_right_attrs_pols, data, log, configs) if len(dif_left_right_attrs_pols) >= 2 else data
+        data, deletion_count = same_attrs_cleaner(same_left_right_attrs_pols, data, deletion_count)
 
-    return data
+    if len(dif_left_right_attrs_pols) >= 2:
 
+        data, deletion_count = crossed_attrs_cleaner(dif_left_right_attrs_pols, data, deletion_count)
 
-def same_attrs_cleaner(same_left_right_attrs_pols, data, log, configs):
-
-    conditional_print('\n        [same_attrs_cleaner] Procesando {} geometrias com atributos repetidos na direita e na esquerda.'.format(len(same_left_right_attrs_pols)), configs)
-
-    pass # PAREI AQUI: FALTA IMPLEMENTAR A REMOÇÃO DOS CASOS COM MESMOS ATRIBUDOS LEFT E RIGHT, MANTENDO UM DELES, PROVAVELMNENTE. PENSAR BEM.
+    return data, deletion_count
 
 
-def crossed_attrs_cleaner(dif_left_right_attrs_pols, data, log, configs):
+def same_attrs_cleaner(same_left_right_attrs_pols, data, deletion_count):
 
-    conditional_print('\n        [crossed_attrs_cleaner] Procesando {} geometrias com diferentes atributos na direita e na esquerda.'.format(len(dif_left_right_attrs_pols)), configs)
+    # Elimina os polígonos com mesma classe tanto no lado esquerdo quando no direito do resultado do overlay.
+    # O objetivo é manter apenas os dados resultantes do cruzamento de classes diferentes para análise das transições.
+
+    for pol_geos in same_left_right_attrs_pols:
+
+        # pol_geos.delete == True
+        
+        data = data[data.index != pol_geos.index_left]
+
+        deletion_count += 1
+
+    return data, deletion_count
+
+
+def crossed_attrs_cleaner(dif_left_right_attrs_pols, data, deletion_count):
+
+    # Identifica geometrias com mesmos atributos, porém cruzados em relação aos lados direito e esquerdo da saída do overlay.
+    # Como exemplo, considere um caso de sobreposição entre um polígono "As" e outro "Ds". A saída do overlay resultará em
+    # duas geometrias idênticas, mas com atributos cruzados, isto é: "As | Ds" e "Ds | As".
+    # Aqui identifica-se esse caso e elimina-se um deles.
 
     for i, pol_geos in enumerate(dif_left_right_attrs_pols):
 
@@ -495,17 +522,19 @@ def crossed_attrs_cleaner(dif_left_right_attrs_pols, data, log, configs):
 
                     pol_geos.cross_attrs_indexes.append(dif_left_right_attrs_pols[j].index_left)
 
-                    dif_left_right_attrs_pols[j].delete == True
+                    # dif_left_right_attrs_pols[j].delete == True
 
                     # conditional_print('\n              [crossed_attrs_cleaner] Index principal: {}. Index marcado para deleção: {}'.format(pol_geos.index_left, dif_left_right_attrs_pols[j].index_left), configs)
                     
                     data = data[data.index != dif_left_right_attrs_pols[j].index_left]
 
+                    deletion_count += 1
+
             j += 1
 
-    conditional_print('\n        [same_geom_cleaner] Successo. {}'.format(log.subprocess()), configs)
+    # conditional_print('\n        [same_geom_cleaner] Successo. {}'.format(log.subprocess()), configs)
 
-    return data
+    return data, deletion_count
 
 
 def left_right_equality(pol_geos_1, pol_geos_2):
