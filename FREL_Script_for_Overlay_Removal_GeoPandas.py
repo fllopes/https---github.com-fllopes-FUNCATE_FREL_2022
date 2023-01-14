@@ -111,7 +111,7 @@ def trigger_algorithm(configs, file, file_count, total_files_count, progress):
 
         else: pass
     
-        overlay, success = self_overlay(loaded_data.file_data, log, configs)
+        overlay, success = self_overlay(loaded_data.file_data, log, configs, file.stem)
 
         if success == False:
     
@@ -363,7 +363,7 @@ def remove_repeated_geoms(data, log, configs):
     return data
 
 
-def self_overlay(data, log, configs):
+def self_overlay(data, log, configs, file_name):
 
     conditional_print('\n  2. União:', configs)
     
@@ -377,11 +377,15 @@ def self_overlay(data, log, configs):
             
         validated_overlay = data_validator(raw_overlay, log, configs)
 
+        if configs.export_intermediary:
+
+            export(validated_overlay, '2ValOvr', configs, file_name, log)
+
         global data_for_outside_use
 
         data_for_outside_use.append({'validated_overlay':validated_overlay})
 
-        ready_overlay = data_cleaner(validated_overlay, log, configs)
+        ready_overlay = data_cleaner(validated_overlay, log, configs, file_name)
 
         data_for_outside_use.append({'cleansed_overlay':ready_overlay})
 
@@ -396,7 +400,7 @@ def self_overlay(data, log, configs):
         return None, False
 
 
-def data_cleaner(data, log, configs):
+def data_cleaner(data, log, configs, file_name):
 
     conditional_print('\n     [data_cleaner] Limpando o output:\n       Casos com geometrias idênticas e classes repetidas ou cruzadas:', configs)
 
@@ -406,9 +410,9 @@ def data_cleaner(data, log, configs):
     
     for geom in data.geometry:
 
-        # if geom_pack_count > 200:
-
-        #     break
+        # if (j := ((geom_pack_count + 1) / 1000)) == 1:
+    
+        #     export(data, 'DtCln_part' + str(int(j)), configs, file_name, log)
 
         geom_pack_count += 1
 
@@ -462,15 +466,21 @@ def same_geom_cleaner(same_geom_data_pack, data, deletion_count):
 
     for idx in same_geom_data_pack.index:
 
-        pol_geos = Pol_geoseries(data.iloc[idx])
+        try:
 
-        if pol_geos.same_left_right_attrs_check == True:
+            pol_geos = Pol_geoseries(data.iloc[idx])
 
-            same_left_right_attrs_pols.append(pol_geos)
+            if pol_geos.same_left_right_attrs_check == True:
 
-        else:
+                same_left_right_attrs_pols.append(pol_geos)
 
-            dif_left_right_attrs_pols.append(pol_geos)
+            else:
+
+                dif_left_right_attrs_pols.append(pol_geos)
+
+        except IndexError as e:
+            
+            print(e)
 
     if len(same_left_right_attrs_pols):
 
