@@ -161,7 +161,7 @@ def get_data(file, file_count, log, configs):
 
         data_for_outside_use.append({'raw_data': raw_input_data})
 
-        validated_data = data_validator(raw_input_data, log, configs)
+        validated_data = data_validator(raw_input_data, True, log, configs)
 
         data_for_outside_use.append({'validated_data': validated_data})
 
@@ -205,7 +205,7 @@ def load_to_postgis(data, file, configs):
         return None, False
 
 
-def data_validator(data, log, configs):
+def data_validator(data, convert_zeroes_to_none, log, configs):
 
     conditional_print('\n     [data_validator] Validando geometrias:', configs)
 
@@ -215,15 +215,21 @@ def data_validator(data, log, configs):
 
     data = remove_non_pol_geoms(data, log, configs)
 
+    if convert_zeroes_to_none == True:
+
+        data = zeroes_to_none(data, log, configs)
+
     data = remove_repeated_geoms(data, log, configs)
 
     data = multipol_to_pol(data, log, configs)
 
     data = remove_dimension_z(data, log, configs)
 
+    validation_success = validation_check(data)
+
     conditional_print('\n        Número de geometrias no arquivo após a validação: {}\n'.format(len(data)), configs)
 
-    conditional_print('\n        [data_validator] Sucesso. {}'.format(log.subprocess()), configs)
+    conditional_print('\n        [data_validator] {}. {}'.format('Sucesso' if validation_success == True else 'Executada, mas sem sucesso.', log.subprocess()), configs)
 
     return data
 
@@ -283,6 +289,23 @@ def remove_non_pol_geoms(data, log, configs):
     conditional_print('\n        [remove_non_pol_geoms] Removendo {} geometrias que não são polígonos. {} {}'.format(removed_geoms_count, ([str(k + ':' + str(v) + '.') for k, v in removed_geoms.items()] if len(removed_geoms) > 0 else ''), log.subprocess()), configs)
 
     count_check(initial_geoms_count, removed_geoms_count, len(data), configs)
+
+    return data
+
+
+def zeroes_to_none(data, log, configs):
+
+    data.loc[data['CDW'] == 0, 'CDW'] = float("nan")
+
+    data.loc[data['CLITTER'] == 0, 'CLITTER'] = float("nan")
+
+    data.loc[data['CTOTAL4INV'] == 0, 'CTOTAL4INV'] = float("nan")
+
+    data.loc[data['CAGB'] == 0, 'CAGB'] = float("nan")
+
+    data.loc[data['CBGB'] == 0, 'CBGB'] = float("nan")
+
+    conditional_print('\n        [zeroes_to_none] Convertendo valores iguais a zero para None, visando maximizar a limpeza que será feita posteriormente na saída do overlay.'.format(log.subprocess()), configs)
 
     return data
 
@@ -363,6 +386,22 @@ def remove_repeated_geoms(data, log, configs):
     return data
 
 
+def validation_check(data):
+    
+    print('\n        [valitation_check] Verificação do output da validação: \n')
+    
+    print('        [valitation_check]   1. Remoção de geometrias vazias: {}\n'.format('Ok', vld_chk := True if len(data[data.geometry == None]) == 0 else str('NÃO Ok. Existem ' + str(len(data[data.geometry == None])) + ' geometrias nulas, quando não deveria haver nenhuma.'), vld_chk == False))
+    
+    geo_tp = [geom_typ for geom_typ in data.geom_type]
+    print('        [valitation_check]   2. Remoção de geometrias que não são polígonos: {}\n'.format(str('Ok (' + geo_tp[0] + ')'), vld_chk == True if len(set(geo_tp)) == 1 and geo_tp[0] == 'Polygon' else str( 'NÃO Ok (' + geo_tp + ')'), vld_chk == False))
+    
+    print('        [valitation_check]   3. Remoção de geometrias repetidas: {}\n'.format('Ok.', vld_chk == True if len(data) == len([geom for geom in data.drop_duplicates().geometry]) else str('NÃO Ok. Existem ' + str(len(data) - len([geom for geom in data.drop_duplicates().geometry])) +  'geometrias repetidas, quando não deveria haver nenhuma.' ), vld_chk == False))
+    
+    print('        [valitation_check]   4. Remoção de geometrias com eixo z: {}\n'.format('Ok.', vld_chk == True if len(set([pol.has_z for pol in data.geometry])) == 1 and list(set([pol.has_z for pol in data.geometry]))[0] == False else 'NÃO Ok. Permanece havendo dados com eixo z', vld_chk == False))
+
+    return vld_chk 
+
+
 def self_overlay(data, log, configs, file_name):
 
     conditional_print('\n  2. União:', configs)
@@ -375,7 +414,7 @@ def self_overlay(data, log, configs, file_name):
 
         conditional_print('\n     [self_union] Successo. {}'.format(log.subprocess()), configs)
             
-        validated_overlay = data_validator(raw_overlay, log, configs)
+        validated_overlay = data_validator(raw_overlay, False, log, configs)
 
         if configs.export_intermediary:
 
@@ -408,7 +447,7 @@ def data_cleaner(data, log, configs, file_name):
 
     deletion_count = 0
     
-    for geom in data.geometry:
+    for geom in data.geometry: # No arquivo 1 totaliza 14338 pacotes
 
         # if (j := ((geom_pack_count + 1) / 1000)) == 1:
     
@@ -416,9 +455,9 @@ def data_cleaner(data, log, configs, file_name):
 
         geom_pack_count += 1
 
-        if len(data[data.geometry == geom]) > 1:
+        print('Percentual executado (válido para o primeiro arquivo): ', percentual_processado_valido_para_arquivo1 := round(geom_pack_count * 100 / 14338, 2), '%')
         
-            data, deletion_count = same_geom_cleaner(data[data.geometry == geom], data, deletion_count)
+        data, deletion_count = same_geom_cleaner(data[data.geometry == geom], data, deletion_count)
 
     conditional_print('\n     [data_cleaner] Foram processados {} pacotes de geometrias. Foram eliminados {} itens.'.format(geom_pack_count, deletion_count), configs)
 
@@ -432,63 +471,65 @@ def same_geom_cleaner(same_geom_data_pack, data, deletion_count):
     # Esse método organiza os dados com geometrias idênticas e executa elgoritmos de limpeza.
     # Os elementos idênticos (geometria e atributos) são eliminados na validação e assume-se que nesse ponto não existirão.
 
-    class Pol_geoseries:
+    if len(same_geom_data_pack) > 1:
 
-        def __init__(self, pol):
+        class Pol_geoseries:
 
-            self.pol = pol
-            self.index_left = pol.name
-            self.left_attrs = Pol_attrs(pol, True)
-            self.right_attrs = Pol_attrs(pol, False)
-            self.same_left_right_attrs_check = True if ((self.left_attrs.C_PRETORIG == self.right_attrs.C_PRETORIG) & (self.left_attrs.C_PRETVIZI == self.right_attrs.C_PRETVIZI) & (self.left_attrs.CATEGORIG == self.right_attrs.CATEGORIG) & (self.left_attrs.CATEGVIZI == self.right_attrs.CATEGVIZI) & (self.left_attrs.TIPO == self.right_attrs.TIPO) & (self.left_attrs.CDW == self.right_attrs.CDW) & (self.left_attrs.CLITTER == self.right_attrs.CLITTER) & (self.left_attrs.CTOTAL4INV == self.right_attrs.CTOTAL4INV) & (self.left_attrs.CAGB == self.right_attrs.CAGB) & (self.left_attrs.CBGB == self.right_attrs.CBGB)) else False
-            self.cross_attrs_indexes = []
-            self.delete = False
-   
+            def __init__(self, pol):
 
-    class Pol_attrs:
+                self.pol = pol
+                self.index_left = pol.name
+                self.left_attrs = Pol_attrs(pol, True)
+                self.right_attrs = Pol_attrs(pol, False)
+                self.same_left_right_attrs_check = True if ((self.left_attrs.C_PRETORIG == self.right_attrs.C_PRETORIG) & (self.left_attrs.C_PRETVIZI == self.right_attrs.C_PRETVIZI) & (self.left_attrs.CATEGORIG == self.right_attrs.CATEGORIG) & (self.left_attrs.CATEGVIZI == self.right_attrs.CATEGVIZI) & (self.left_attrs.TIPO == self.right_attrs.TIPO) & (self.left_attrs.CDW == self.right_attrs.CDW) & (self.left_attrs.CLITTER == self.right_attrs.CLITTER) & (self.left_attrs.CTOTAL4INV == self.right_attrs.CTOTAL4INV) & (self.left_attrs.CAGB == self.right_attrs.CAGB) & (self.left_attrs.CBGB == self.right_attrs.CBGB)) else False
+                self.cross_attrs_indexes = []
+                self.delete = False
+    
 
-        def __init__(self, pol, left_side):
+        class Pol_attrs:
 
-            self.C_PRETORIG = pol.C_PRETORIG_1 if left_side else pol.C_PRETORIG_2
-            self.C_PRETVIZI = pol.C_PRETVIZI_1 if left_side else pol.C_PRETVIZI_2
-            self.CATEGORIG = pol.CATEGORIG_1 if left_side else pol.CATEGORIG_2
-            self.CATEGVIZI = pol.CATEGVIZI_1 if left_side else pol.CATEGVIZI_2
-            self.TIPO = pol.TIPO_1 if left_side else pol.TIPO_2
-            self.CDW = (None if numpy.isnan(pol.CDW_1) else pol.CDW_1) if left_side else (None if numpy.isnan(pol.CDW_2) else pol.CDW_2)
-            self.CLITTER = (None if numpy.isnan(pol.CLITTER_1) else pol.CLITTER_1) if left_side else (None if numpy.isnan(pol.CLITTER_2) else pol.CLITTER_2)
-            self.CTOTAL4INV = (None if numpy.isnan(pol.CTOTAL4INV_1) else pol.CTOTAL4INV_1) if left_side else (None if numpy.isnan(pol.CTOTAL4INV_2) else pol.CTOTAL4INV_2)
-            self.CAGB = (None if numpy.isnan(pol.CAGB_1) else pol.CAGB_1) if left_side else (None if numpy.isnan(pol.CAGB_2) else pol.CAGB_2)
-            self.CBGB = (None if numpy.isnan(pol.CBGB_1) else pol.CBGB_1) if left_side else (None if numpy.isnan(pol.CBGB_2) else pol.CBGB_2)
+            def __init__(self, pol, left_side):
 
-    same_left_right_attrs_pols = []
+                self.C_PRETORIG = pol.C_PRETORIG_1 if left_side else pol.C_PRETORIG_2
+                self.C_PRETVIZI = pol.C_PRETVIZI_1 if left_side else pol.C_PRETVIZI_2
+                self.CATEGORIG = pol.CATEGORIG_1 if left_side else pol.CATEGORIG_2
+                self.CATEGVIZI = pol.CATEGVIZI_1 if left_side else pol.CATEGVIZI_2
+                self.TIPO = pol.TIPO_1 if left_side else pol.TIPO_2
+                self.CDW = (None if numpy.isnan(pol.CDW_1) else pol.CDW_1) if left_side else (None if numpy.isnan(pol.CDW_2) else pol.CDW_2)
+                self.CLITTER = (None if numpy.isnan(pol.CLITTER_1) else pol.CLITTER_1) if left_side else (None if numpy.isnan(pol.CLITTER_2) else pol.CLITTER_2)
+                self.CTOTAL4INV = (None if numpy.isnan(pol.CTOTAL4INV_1) else pol.CTOTAL4INV_1) if left_side else (None if numpy.isnan(pol.CTOTAL4INV_2) else pol.CTOTAL4INV_2)
+                self.CAGB = (None if numpy.isnan(pol.CAGB_1) else pol.CAGB_1) if left_side else (None if numpy.isnan(pol.CAGB_2) else pol.CAGB_2)
+                self.CBGB = (None if numpy.isnan(pol.CBGB_1) else pol.CBGB_1) if left_side else (None if numpy.isnan(pol.CBGB_2) else pol.CBGB_2)
 
-    dif_left_right_attrs_pols = []
+        same_left_right_attrs_pols = []
 
-    for idx in same_geom_data_pack.index:
+        dif_left_right_attrs_pols = []
 
-        try:
+        for idx in same_geom_data_pack.index:
 
-            pol_geos = Pol_geoseries(data.iloc[idx])
+            try:
 
-            if pol_geos.same_left_right_attrs_check == True:
+                pol_geos = Pol_geoseries(data.iloc[idx])
 
-                same_left_right_attrs_pols.append(pol_geos)
+                if pol_geos.same_left_right_attrs_check == True:
 
-            else:
+                    same_left_right_attrs_pols.append(pol_geos)
 
-                dif_left_right_attrs_pols.append(pol_geos)
+                else:
 
-        except IndexError as e:
-            
-            print(e)
+                    dif_left_right_attrs_pols.append(pol_geos)
 
-    if len(same_left_right_attrs_pols):
+            except IndexError as e:
+                
+                print(e)
 
-        data, deletion_count = same_attrs_cleaner(same_left_right_attrs_pols, data, deletion_count)
+        if len(same_left_right_attrs_pols):
 
-    if len(dif_left_right_attrs_pols) >= 2:
+            data, deletion_count = same_attrs_cleaner(same_left_right_attrs_pols, data, deletion_count)
 
-        data, deletion_count = crossed_attrs_cleaner(dif_left_right_attrs_pols, data, deletion_count)
+        if len(dif_left_right_attrs_pols) >= 2:
+
+            data, deletion_count = crossed_attrs_cleaner(dif_left_right_attrs_pols, data, deletion_count)
 
     return data, deletion_count
 
